@@ -29,9 +29,10 @@ import sys
 import tempfile
 from dataclasses import dataclass, field
 
-from brevio.pipeline import core_cli
+from brevio.pipeline import core_agent_block, core_cli, core_platform, core_specs, core_warmstart
 from brevio.pipeline.agent_host import client_detect, jsonstore
-from brevio.pipeline.gates import agent_hooks, agent_skill, defect_compiler
+from brevio.pipeline.core_specs import detect_stack, render_specs
+from brevio.pipeline.gates import agent_hooks
 from brevio.pipeline.rule_host import GIT
 
 HELP = "set this repository up in one step: the Action, agent rules and a baseline (init --undo takes it back)"
@@ -46,8 +47,6 @@ SERVER = "brevio-core"
 MCP_FILES = {"claude_code": ".mcp.json", "cursor": ".cursor/mcp.json"}
 DEFAULT_PARTS = ("action", "agents-md", "baseline")
 OPT_IN_PARTS = ("precommit", "hook", "mcp", "specs")
-# Third-party actions are pinned to a commit, not a movable tag (ADOPTION.md rule "everything is pinned", 2026-11-05).
-CHECKOUT_PIN = "11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2"
 BADGE_IMAGE ="https://img.shields.io/badge/checked%20by-brevio--core-blue"
 AGENT_NAMES = {"claude_code": "Claude Code", "cursor": "Cursor", "codex": "Codex", "hermes": "Hermes", "openclaw": "OpenClaw"}
 # The files ``hook install`` writes for each agent, named from its own constants.
@@ -122,7 +121,7 @@ class Ctx:
 
 def _git(cwd: str, *args: str) -> tuple[int, str]:
     try:
-        r = subprocess.run([*GIT, "-C", cwd, *args], capture_output=True, text=True, timeout=60)
+        r = subprocess.run([*GIT, "-C", cwd, *args], capture_output=True, encoding="utf-8", errors="replace", timeout=60)
     except (OSError, subprocess.SubprocessError):
         return 1, ""
     return r.returncode, r.stdout
@@ -153,7 +152,7 @@ def installed_metadata(name: str) -> dict[str, list[str]] | None:
                 continue
             text = _read(path) or ""
             fields: dict[str, list[str]] = {}
-            for line in text.split("\n\n", 1)[0].splitlines():
+            for line in re.split(r"\r?\n\r?\n", text, maxsplit=1)[0].splitlines():     # CRLF too (2026-11-12, first Windows run)
                 key, sep, value = line.partition(":")
                 if sep and not line[:1].isspace():
                     fields.setdefault(key.strip(), []).append(value.strip())
@@ -194,37 +193,6 @@ def detect_agents(root: str) -> dict[str, bool]:
     }
 
 
-def _has_fastapi(root: str) -> bool:
-    for rel in ("pyproject.toml", "requirements.txt"):
-        p = os.path.join(root, rel)
-        if os.path.isfile(p):
-            try:
-                with open(p, encoding="utf-8", errors="ignore") as fh:
-                    if "fastapi" in fh.read().lower():
-                        return True
-            except OSError:
-                pass
-    return False
-
-
-def detect_stack(root: str) -> list[str]:
-    """Detect technologies present in this repository by checking marker files."""
-    checks = (
-        ("Python", ("pyproject.toml", "requirements.txt")),
-        ("Node/TS", ("package.json",)),
-        ("TypeScript", ("tsconfig.json",)),
-        ("Docker", ("Dockerfile", "docker-compose.yml", "docker-compose.yaml")),
-        ("Database/Migrations", ("prisma/schema.prisma", "migrations")),
-        ("Next.js", ("next.config.js", "next.config.ts", "next.config.mjs")),
-        ("Rust", ("Cargo.toml",)),
-        ("Go", ("go.mod",)),
-    )
-    detected = [label for label, rels in checks if any(os.path.exists(os.path.join(root, r)) for r in rels)]
-    if _has_fastapi(root) and "FastAPI" not in detected:
-        detected.append("FastAPI")
-    return detected
-
-
 def live_hook_selftest() -> str:
     """Run an in-memory verification scan to confirm the defect gate catches issues with zero disk writes."""
     core_cli.scan({
@@ -234,49 +202,9 @@ def live_hook_selftest() -> str:
     return "verified in-memory gate: caught [R9.1] untyped escape hatch (0 files touched)"
 
 
-_FIX_COMMIT_RX = re.compile(r"\b(?:fix|bug|revert|hotfix)\b", re.I)
-
-
-def warmstart_from_git_history(root: str, limit: int = 10) -> int:
-    """Mine recent fix/revert commits into trial-status guards (non-blocking until 5 clean runs)."""
-    seeded = 0
-    for idx in range(max(1, min(limit, 25))):
-        ref = "HEAD" if idx == 0 else f"HEAD~{idx}"
-        code, out = _git(root, "show", "--format=%s%n---BREVIO_DIFF---", ref)
-        if code or not out:
-            break
-        subject, sep, diff_text = out.partition("\n---BREVIO_DIFF---\n")
-        subject = subject.strip()
-        if not sep or not _FIX_COMMIT_RX.search(subject):
-            continue
-        if defect_compiler.compile_guard_from_diff(diff_text, name=subject[:60], cwd=root):
-            seeded += 1
-    return seeded
-
-
 def workflow_text(rel: Release) -> str:
-    """The pull-request workflow: read-only by default, ``pull-requests: write`` on the job alone, pinned exactly."""
-    return f"""# Written by `brevio-core init`; `brevio-core init --undo` removes it while it is unchanged.
-name: brevio-core
-on:
-  pull_request:
-  merge_group:
-permissions:
-  contents: read
-jobs:
-  brevio-core:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pull-requests: write
-    steps:
-      - uses: actions/checkout@{CHECKOUT_PIN}
-        with:
-          fetch-depth: 0
-      - uses: {rel.action}@v{rel.version}
-        with:
-          package-version: {rel.version}
-"""
+    """The pull-request workflow, written by ``core_specs`` so the README's first screen shares its checkout pin."""
+    return core_specs.workflow_text(rel.action, rel.version)
 
 
 def plan_action(ctx: Ctx) -> list[Op]:
@@ -296,9 +224,9 @@ def _append(rel: str, before: str | None, text: str, local: bool = False) -> Op:
     return Op(rel, "insert", sep + text, offset=len(before), before=before, local=local)
 
 
-def agents_block() -> str:
-    """The marked block of agent rules; its rules are ``agent_skill.AGENT_RULES``, the skill's own text."""
-    return f"{MARK_START}\n## brevio-core\n\n{agent_skill.AGENT_RULES}{MARK_END}\n"
+def agents_block(rel: Release | None = None) -> str:
+    """The marked block of agent rules: the skill's own text, with the command pinned to ``rel`` when it is known."""
+    return f"{MARK_START}\n## brevio-core\n\n{core_agent_block.rules(SERVER, rel.version if rel else None)}{MARK_END}\n"
 
 
 def plan_agents_md(ctx: Ctx) -> list[Op]:
@@ -307,14 +235,14 @@ def plan_agents_md(ctx: Ctx) -> list[Op]:
     if text is not None and MARK_START in text:
         ctx.notes.append("agents-md: AGENTS.md has the brevio-core block already")
     else:
-        ops.append(_append("AGENTS.md", text, agents_block()))
+        ops.append(_append("AGENTS.md", text, agents_block(ctx.release)))
     claude = _read(ctx.path("CLAUDE.md"))
     if claude is not None and not re.search(r"^@AGENTS\.md[ \t]*$", claude, re.M):
         ops.append(Op("CLAUDE.md", "insert", ("" if claude.endswith("\n") or not claude else "\n") + "@AGENTS.md\n",
                       offset=len(claude), before=claude))
     if ctx.agents.get("cursor") and not os.path.exists(ctx.path(CURSOR_RULE)):
         ops.append(Op(CURSOR_RULE, "file", '---\ndescription: "brevio-core rules for this repository"\nalwaysApply: true\n'
-                                           f"---\n{agent_skill.AGENT_RULES}"))
+                                           f"---\n{core_agent_block.rules(SERVER, ctx.release.version if ctx.release else None)}"))
     for extra in (".windsurfrules", ".clinerules", ".github/copilot-instructions.md"):
         extra_path = ctx.path(extra)
         if os.path.isfile(extra_path):
@@ -489,100 +417,6 @@ def plan_mcp(ctx: Ctx) -> list[Op]:
     return ops
 
 
-def render_specs(root: str, stack: list[str] | None = None) -> dict[str, str]:
-    """Generate deterministic starter content for CONSTITUTION.md, CLAUDE.md, and roadmap.json."""
-    if stack is None:
-        stack = detect_stack(root)
-    raw_slug = os.path.basename(os.path.abspath(root))
-    project_slug = re.sub(r"[^a-zA-Z0-9_-]", "-", raw_slug).strip("-") or "project"
-    stack_str = ", ".join(stack) if stack else "generic"
-
-    constitution_text = (
-        f"# Engineering Constitution: {project_slug}\n\n"
-        "## 1. Architecture Invariants\n"
-        f"- Stack: {stack_str}\n"
-        "- Clean boundaries: Modules declare explicit public interfaces and preserve loose coupling.\n"
-        "- Standard library and deterministic execution: zero external network dependencies in flight checks.\n\n"
-        "## 2. File Custody & Preservation Rules\n"
-        "- Never remove existing tests or loosen assertions without explicit design authorization.\n"
-        "- Preserve existing docstrings, license headers, and architecture comments.\n"
-        "- Task isolation: scope file modifications strictly to the acceptance criteria.\n\n"
-        "## 3. Zero-Regression Test Requirements\n"
-        "- Every defect fix and feature must ship with deterministic regression tests.\n"
-        "- Test suites must execute locally and in CI with clean zero exits.\n\n"
-        "## 4. Brevio-Core Flight Gate Invariants\n"
-        "- `brevio-core scan --diff HEAD`: Zero code rule findings allowed in modified lines.\n"
-        "- `brevio-core check`: Conflict markers, test custody, AST complexity, and orphan files must pass.\n"
-        "- `brevio-core score`: Agent Safety Score must maintain minimum quality bar (>= 80, Grade B or higher).\n"
-    )
-
-    claude_text = (
-        f"# {project_slug}\n\n"
-        "## Project Overview\n"
-        f"Engineering workspace for {project_slug} enforcing brevio-core single-task quality standards.\n\n"
-        "## Single-Task Local Workflow\n"
-        "Follow the deterministic task progression in order:\n"
-        "1. `brevio-core connect`: Detect stack and coding clients and scaffold specs.\n"
-        "2. `brevio-core plan [task]`: Create single-task plan (.brevio/task_plan.json & .brevio/TASK_PLAN.md).\n"
-        "3. `brevio-core build`: Execute build preparation and deterministic auto-fixes.\n"
-        "4. `brevio-core qa`: Run pre-PR flight gates and safety scorecard (.brevio/qa_report.json).\n"
-        "5. `brevio-core pr`: Verify QA gates and synthesize PR body (.brevio/PR_BODY.md).\n\n"
-        "Alternatively, run the entire loop in one step:\n"
-        "`brevio-core task [task]`\n\n"
-        "## Repository Invariants & Rules\n"
-        "@AGENTS.md\n"
-        "Refer to CONSTITUTION.md for architecture invariants, custody rules, and flight gate definitions.\n"
-    )
-
-    roadmap_data = {
-        "project": project_slug,
-        "edition": "core",
-        "items": [
-            {
-                "id": "TASK-001",
-                "title": "Pass single-task quality gates and eliminate code findings",
-                "priority": "P0",
-                "type": "quality",
-                "acceptance_criteria": [
-                    "Pass brevio-core scan --diff HEAD with 0 findings",
-                    "Pass brevio-core check pre-PR flight gates",
-                    "Achieve Agent Safety Score >= 80",
-                ],
-                "status": "todo",
-            },
-            {
-                "id": "TASK-002",
-                "title": "Establish test custody and baseline coverage invariants",
-                "priority": "P1",
-                "type": "testing",
-                "acceptance_criteria": [
-                    "Verify existing tests pass without regressions",
-                    "Ensure every new module has corresponding test custody",
-                ],
-                "status": "todo",
-            },
-            {
-                "id": "TASK-003",
-                "title": "Automate single-task PR receipt generation in local workflow",
-                "priority": "P2",
-                "type": "workflow",
-                "acceptance_criteria": [
-                    "Generate .brevio/PR_BODY.md with valid safety score badge",
-                    "Confirm roadmap item status transitions to done upon QA pass",
-                ],
-                "status": "todo",
-            },
-        ],
-    }
-    roadmap_text = json.dumps(roadmap_data, indent=2) + "\n"
-
-    return {
-        "CONSTITUTION.md": constitution_text,
-        "CLAUDE.md": claude_text,
-        "roadmap.json": roadmap_text,
-    }
-
-
 def plan_specs(ctx: Ctx) -> list[Op]:
     specs = render_specs(ctx.root)
     ops: list[Op] = []
@@ -653,7 +487,7 @@ def confirm(yes: bool, dry_run: bool, question: str) -> bool:
         return False
     if yes:
         return True
-    if not sys.stdin.isatty():
+    if not core_platform.is_terminal(sys.stdin):
         print("brevio-core: no terminal to ask, so this was a dry run and nothing was written; run again with --yes")
         return False
     try:
@@ -738,7 +572,7 @@ def _report(ctx: Ctx, written: list[str]) -> None:
         print(f"recorded in {RECORD}; `brevio-core init --undo` removes what is unchanged")
     if ctx.release:
         print(f"\nREADME badge:\n  {badge(ctx.release)}")
-        print("  Run `brevio-core score` for your live Agent Safety Score (A+ to F) & scorecard.")
+        print("  Run `brevio-core score` (preview) for a count of findings by rule.")
         if os.path.isfile(ctx.path("package.json")):
             print("\n" + husky_snippet(ctx.release))
     for note in ctx.notes:
@@ -749,7 +583,7 @@ def _found(ctx: Ctx) -> None:
     names = [AGENT_NAMES[a] for a, on in ctx.agents.items() if on]
     print(f"repository: {ctx.root}\ncoding agents found: {', '.join(names) or 'none'}")
     if ctx.agents.get("codex"):
-        ctx.notes.append("Codex: there is no hook for it; the AGENTS.md block covers it")
+        ctx.notes.append("Codex: brevio-core installs no hook for it; the AGENTS.md block covers it")
 
 
 def init(root: str, parts: set[str], yes: bool, dry_run: bool, personal: bool = False) -> int:
@@ -777,7 +611,7 @@ def init(root: str, parts: set[str], yes: bool, dry_run: bool, personal: bool = 
 
 
 def _read_wizard_choice() -> str:
-    if sys.stdin.isatty():
+    if core_platform.is_terminal(sys.stdin):
         print("Setup profile:\n"
               "  [1] Full protection (Action, AGENTS.md, baseline, personal hook & MCP) [default]\n"
               "  [2] Personal stealth mode (hook & MCP only, git-excluded via .git/info/exclude)\n"
@@ -797,7 +631,7 @@ def _record_warmstart(root: str) -> None:
     prior_files = set(glob.glob(os.path.join(root, ".agents", "rules", "*.md")))
     if os.path.isfile(os.path.join(root, ".brevio", "guards.json")):
         prior_files.add(os.path.join(root, ".brevio", "guards.json"))
-    seeded = warmstart_from_git_history(root)
+    seeded = core_warmstart.warmstart(root)     # lists what it keeps and drops, and asks, before it writes (2026-11-12, improvement plan)
     if not seeded:
         return
     record_path = os.path.join(root, RECORD)

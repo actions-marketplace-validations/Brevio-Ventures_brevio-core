@@ -35,7 +35,7 @@ def tearDownModule():
 
 
 def run_cli(cwd, *args):
-    return subprocess.run([sys.executable, "-I", "-c", _RUN, TREE, *args], cwd=cwd, capture_output=True, text=True, timeout=60)
+    return subprocess.run([sys.executable, "-I", "-c", _RUN, TREE, *args], cwd=cwd, capture_output=True, encoding="utf-8", timeout=60)
 
 
 def read(rel):

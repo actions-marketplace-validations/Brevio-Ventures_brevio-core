@@ -3,7 +3,7 @@
 ``dev_rules`` needs three things from its host: a hardened ``git`` command line, the lines a file adds or
 loses against main, and the raw-palette test. They live here, on the standard library alone, so
 ``dev_rules``, ``code_rules`` and the AEO rubric export with no private import and no model call
-(the harness's core exporter). The harness keeps ``gitsafe`` and ``function_first`` for its own gates;
+(the harness's core exporter). The harness keeps its own copies of the git and palette helpers for its gates;
 ``tests/pipeline/test_rule_host.py`` pins this copy to them so the two cannot drift.
 """
 from __future__ import annotations
@@ -26,7 +26,8 @@ def ui_source(path: str) -> bool:
 
 def _git(cwd: str, *args: str) -> str:
     try:
-        r = subprocess.run([*GIT, "-C", cwd, *args], capture_output=True, text=True, timeout=120)
+        r = subprocess.run([*GIT, "-C", cwd, *args],
+                           capture_output=True, encoding="utf-8", errors="replace", timeout=120)
     except (OSError, subprocess.SubprocessError):
         return ""
     return r.stdout if r.returncode == 0 else ""
@@ -77,7 +78,7 @@ def head_added_lines(workspace_dir: str, rel_path: str) -> list[tuple[int, str]]
     """``(line_no, text)`` for the lines ``rel_path`` adds against HEAD; empty when git has no diff for it."""
     try:
         res = subprocess.run([*GIT, "-C", workspace_dir, "diff", "-U0", "HEAD", "--", rel_path],
-                             capture_output=True, text=True, timeout=10)
+                             capture_output=True, encoding="utf-8", errors="replace", timeout=10)
     except (OSError, subprocess.SubprocessError):
         return []
     if res.returncode != 0 or not res.stdout.strip():

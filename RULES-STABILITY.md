@@ -7,10 +7,14 @@ name rules by ID, so an ID never changes its meaning under you.
 
 - **IDs are permanent.** An ID is never reused for another rule and never renumbered. A rule whose meaning changes
   gets a new ID.
+- **A title may be reworded to what the scan checks.** When a title promised more than the scan finds, or used an
+  absolute word, it is narrowed, and the release notes list it under "Reworded". The ID and the status do not change. A
+  rule that finds more or less than before has a note in the release notes that says so.
 - **A retired rule keeps its ID** with the status `deprecated`. It reports nothing, and the ID is never brought back.
   An ignore comment or config line that names it stays valid.
 - **A new rule ships as `preview`** for one minor release. A preview rule reports its findings, as warnings in SARIF,
-  but never fails a scan, whatever `--fail-on` says. After that release it becomes `stable` or is changed.
+  but does not fail a scan, whatever `--fail-on` says. `brevio-core check`, which also runs the preview test-custody
+  rules (R20), exits 1 on them. After that release a rule becomes `stable` or is changed.
 - **A stable rule fails a scan** under `--fail-on new` and `--fail-on all`, and under `--fail-on error` at level
   `error` (the default level; `brevio-core.toml` can set `warn`).
 

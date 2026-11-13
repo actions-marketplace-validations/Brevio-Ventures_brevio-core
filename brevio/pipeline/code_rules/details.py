@@ -25,7 +25,7 @@ def _d(why: str, bad: str, good: str, lang: str = "ts", exempt: str = "") -> Det
     return Detail(why, bad, good, lang, exempt)
 
 
-# rule id -> (scanner, example path). "dev" is brevio.pipeline.dev_rules, "code" is code_rules.scan_added_lines_for_rules.
+# rule id -> (scanner, example path). "dev" is brevio.pipeline.dev_rules (``scan --surface``), "code" is code_rules.scan_added_lines_for_rules.
 SCANS: dict[str, tuple[str, str]] = {
     "R1.1": ("dev", "src/Hero.tsx"),
     "R1.2": ("dev", "src/reveal.css"),
@@ -42,6 +42,7 @@ SCANS: dict[str, tuple[str, str]] = {
     "R9.2": ("code", "src/api.ts"),
     "R9.3": ("dev", "src/api.ts"),
     "R10.1": ("code", "src/client.py"),
+    "R10.9": ("code", "src/client.ts"),
     "R13.1": ("code", "src/client.ts"),
     "R16.2": ("code", "package.json"),
     "R17.2": ("code", "src/Component.tsx"),
@@ -53,9 +54,38 @@ SCANS: dict[str, tuple[str, str]] = {
 
 
 
+# What a scanned rule reads, by language, in plain words: a rule page prints it so the reader sees where the rule applies
+# and where it does not (2026-11-13). A rule not named here has one language, which its examples show.
+SCOPE: dict[str, str] = {
+    "R2.8": "JavaScript and TypeScript (.ts, .tsx, .js, .jsx, .mjs, .cjs): eval, new Function and, in .tsx "
+            "and .jsx, dangerouslySetInnerHTML. Python: eval and exec on a non-literal. Python and JavaScript and "
+            "TypeScript: SQL built by string interpolation. Any code file: hidden control characters.",
+    "R5.4": "JavaScript and TypeScript: an empty catch block. Python: a bare except that does not re-raise, and an except "
+            "handler for Exception whose body is only pass or `...`. A handler that names a narrower error, such as OSError, "
+            "is not flagged.",
+    "R5.5": "Python only.",
+    "R6.3": "A test file in any language: waitForTimeout with a number. A sleep call is not checked.",
+    "R9.2": "JavaScript and TypeScript: @ts-ignore. The reason after @ts-expect-error is not checked.",
+    "R10.1": "Python only: calls of requests.get, post, put, delete, patch and head. Not httpx, not fetch and not axios; "
+             "R10.9 covers fetch and axios.",
+    "R10.9": "JavaScript and TypeScript, outside test files: fetch and axios calls. Python is not read.",
+    "R13.1": "Code files outside tests. Where a secret is logged is not checked.",
+    "R16.2": "package.json, with one key per line or several on a minified line.",
+}
+
+
+# A line a rule page prints under "How it is checked" for findings that now carry another ID (2026-11-13, D34).
+POINTERS: dict[str, str] = {
+    "R6.1": "Test-custody findings now print as R20.x. An empty test body, printed as R6.1 up to 0.9.1, is R20.5; see "
+            "[R20.5](R20.5.md).",
+    "R6.5": "Test-custody findings now print as R20.x. The findings about a deleted, renamed, weakened or skipped test, "
+            "printed as R6.5 up to 0.9.1, are R20.1 to R20.4; see [R20.1](R20.1.md).",
+}
+
+
 def scanned_by(engine: str) -> list[str]:
-    """The rule IDs the scanner ``engine`` checks, sorted: ``code`` is what ``brevio-core scan`` runs, ``dev`` the
-    harness's pre-flight."""
+    """The rule IDs the scanner ``engine`` checks, sorted: ``code`` is what ``brevio-core scan`` runs, ``dev`` what
+    ``brevio-core scan --surface`` adds."""
     return sorted(rid for rid, (e, _path) in SCANS.items() if e == engine)
 
 
@@ -109,7 +139,8 @@ DETAILS: dict[str, Detail] = {
                "injection.",
                "eval(userInput);", "const value = JSON.parse(userInput);", "ts",
                "Comment lines and Playwright's $eval and $$eval are not flagged; dangerouslySetInnerHTML is checked "
-               "only in .tsx and .jsx files outside tests."),
+               "only in .tsx and .jsx files outside tests. In Python, `model.eval()`, `ast.literal_eval` and eval or "
+               "exec of a plain string literal are not flagged."),
     # R3: billing
     "R3.1": _d("Gateways send an event more than once. Without a check the customer is charged or upgraded twice.",
                "await applyEvent(event);",
@@ -147,7 +178,9 @@ DETAILS: dict[str, Detail] = {
                "while (true) { try { return await call(); } catch {} }",
                "retry(call, { on: [429, 502, 503, 504], backoff: 'exponential', jitter: true })"),
     "R5.4": _d("An error that is swallowed leaves no trace, so a failure looks like success.",
-               "try { await save(); } catch (e) {}", "try { await save(); } catch (e) { log.error('save failed', e); throw e; }"),
+               "try { await save(); } catch (e) {}", "try { await save(); } catch (e) { log.error('save failed', e); throw e; }",
+               "ts", "A bare `except:` whose handler re-raises with a plain `raise` at its top level is not flagged; a "
+               "`raise` inside an `if`, or `raise SomethingElse`, does not count."),
     "R5.5": _d("Passing shell=True or an interpolated command string runs a shell that can execute injected input.",
                "subprocess.run(cmd, shell=True)", "subprocess.run(cmd, timeout=60, check=True)", "py",
                "Test files and comment lines are not flagged."),
@@ -159,7 +192,8 @@ DETAILS: dict[str, Detail] = {
                "expect(res.status).toBe(200);\nexpect(row.name).toBe('Ada');"),
     "R6.3": _d("A sleep is either too short (flaky) or too long (slow).",
                "await page.waitForTimeout(2000);", "await expect(page.getByText('Saved')).toBeVisible();",
-               "ts", "Only added lines in a file whose path contains 'test' are checked."),
+               "ts", "Only added lines in a test file are checked: a path with a folder or file name that starts or ends with the "
+               "word test, tests, spec, specs, e2e or testing."),
     "R6.4": _d("Tests that share a database or a state folder pass or fail depending on their order.",
                "const path = '/tmp/state.json';", "const path = join(mkdtempSync(join(tmpdir(), 't-')), 'state.json');"),
     "R6.5": _d("A bug without a test comes back.",
@@ -213,6 +247,12 @@ DETAILS: dict[str, Detail] = {
                 "app.post('/admin/reset', reset);", "app.post('/admin/reset', requireAdmin, reset);"),
     "R10.8": _d("A GET that changes data is triggered by crawlers, prefetchers and link previews.",
                 "app.get('/delete/:id', remove);", "app.delete('/items/:id', remove);"),
+    "R10.9": _d("A fetch with no options has no way to stop waiting, so a slow server holds the request, and the user, for as "
+                "long as it likes.",
+                "const res = await fetch(url);", "const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });", "ts",
+                "A line that names signal or timeout, a call that has an options argument, a call that does not close on "
+                "the line, and test files are not flagged. A timeout set once on an axios instance or in axios.defaults "
+                "is not seen, so a call that relies on it is flagged."),
     # R11: state and concurrency
     "R11.1": _d("Two writers that read, change and write lose one of the changes.",
                 "const n = await get(); await set(n + 1);", "await db.update({ where: { id, version }, data: { n: n + 1, version: version + 1 } });"),
@@ -249,7 +289,7 @@ DETAILS: dict[str, Detail] = {
     "R12.8": _d("A cache with no limit grows for the life of the process.",
                 "const cache = new Map();", "const cache = new LRU({ max: 500, ttl: 60_000 });"),
     # R13: observability
-    "R13.1": _d("A secret in a log or in code ends up in every place the log goes.",
+    "R13.1": _d("A secret written into code is copied wherever the code goes: clones, builds and logs.",
                 "const sessionToken = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0In0.example-signature';",
                 "const sessionToken = process.env.SESSION_TOKEN;", "ts",
                 "Only a known credential format (AWS, GitHub, Slack, Stripe live, Google API key, a private key block) "
@@ -257,7 +297,8 @@ DETAILS: dict[str, Detail] = {
                 "to such a name always is. Test files are not checked. A placeholder (example, fake, test, xxxx, "
                 "your-...) is not a key. Keys that are public by design are not flagged: a name that says public or "
                 "publishable, a Stripe pk_ key, and an Algolia or DocSearch key (named so, or in the five lines below "
-                "such a name)."),
+                "such a name). A secret-named NEXT_PUBLIC_, VITE_ or REACT_APP_ variable is flagged with its own message: the "
+                "build copies it into the browser bundle, so a secret does not belong in it."),
     "R13.2": _d("Plain text logs cannot be searched by field.",
                 "console.log('user ' + id + ' failed');", "log.info({ event: 'login.failed', userId: id });"),
     "R13.3": _d("Without the trace id you cannot follow one request across services.",
@@ -371,4 +412,52 @@ DETAILS: dict[str, Detail] = {
                 "# old_call(x)\nnew_call(x)", "new_call(x)", "py"),
     "R19.4": _d("A one letter name tells the reader nothing.",
                 "const d = Date.now() - s;", "const elapsedMs = Date.now() - startedAt;"),
+    # R20: test custody (2026-11-12, improvement plan 3a)
+    "R20.1": _d("A test file that is deleted, or renamed so that a runner no longer collects it, stops guarding what it "
+                "covered. Sometimes that is right, for example when the code it tested is gone, so a person looks.",
+                "git rm tests/test_billing.py   # the change that made it fail stays in",
+                "restore the test file and fix the code it tests", "text",
+                "only Python files named test_*.py or *_test.py, and JavaScript or TypeScript files named *.test.* or "
+                "*.spec.*, count as test files."),
+    "R20.2": _d("A test file with fewer tests or assertions than before checks less. The count is a plain count of test "
+                "functions and assertion calls in the file, so a test moved to another file reads as fewer too.",
+                "def test_total():\n    assert total(cart) == 30   # the second assertion was dropped",
+                "keep the assertions the file had:\ndef test_total():\n    assert total(cart) == 30\n    assert total([]) == 0", "text",
+                "comment lines are not counted."),
+    "R20.3": _d("A skipped or focused test stops running, or stops the others, while the build stays green. The failure "
+                "it hides is still there.",
+                "it.skip('charges the card', () => { chargeCard(); });",
+                "// fix the code or the test, and keep it running:\nit('charges the card', () => { chargeCard(); });", "text",
+                "comment lines are not flagged, and the markers it reads are `it`, `test` and `describe` with `.skip` "
+                "or `.only`, `xit`, `xtest`, `xdescribe`, and the pytest and unittest skip decorators."),
+    "R20.4": _d("An assertion that compares a value with itself, or asserts True, passes whatever the code does.",
+                "expect(result).toBe(result);", "// assert the real value:\nexpect(result).toBe(30);", "text",
+                "comment lines are not flagged."),
+    "R20.5": _d("A test with an empty body passes without checking anything, and still counts as a test.",
+                "it('charges the card', () => {});",
+                "// give the test a body that checks something:\nit('charges the card', () => {\n  expect(charge(card)).toBe('ok');\n});", "text",
+                "a Python test function whose body is only pass, a docstring or `...`, and a JavaScript or TypeScript "
+                "it or test with an empty body on one line, are flagged; comment lines are not."),
+}
+
+# Rules that `brevio-core check` and the agent hook run, not the scan: rule -> (how it is checked, how to silence it). A
+# page prints these in place of the scanner lines, so it says what the code does (2026-11-12, improvement plan 3a).
+_CUSTODY_BASE = ("`brevio-core check` compares the working tree with `--base` (default `HEAD`). The agent hook runs the "
+                 "same comparison when the agent stops, and `brevio-core patch` runs it on an edit before writing it. "
+                 "`brevio-core scan` does not run it.")
+_CUSTODY_LINES = ("`brevio-core check` reads the lines the change adds. The agent hook runs it when the agent stops, "
+                  "and `brevio-core patch` runs it on an edit before writing it. `brevio-core scan` does not run it.")
+_NO_IGNORE = ("An ignore comment does not silence this rule: `brevio-core check` does not read one for it, and a "
+              "setting in `brevio-core.toml` does not turn it off. A person who means the change keeps it for a "
+              "reviewer to accept; an agent restores the test.")
+CHECKED: dict[str, tuple[str, str]] = {
+    "R20.1": (_CUSTODY_BASE, _NO_IGNORE),
+    "R20.2": (_CUSTODY_BASE, _NO_IGNORE),
+    "R20.3": (_CUSTODY_LINES, _NO_IGNORE),
+    "R20.4": (_CUSTODY_LINES, _NO_IGNORE),
+    "R20.5": ("`brevio-core check` reads the lines the change adds. `brevio-core scan`, the agent hook and "
+              "`brevio-core patch` do not run it.",
+              "A person can silence one finding with `brevio-core: ignore R20.5 -- reason` on the line or the line "
+              "above, in `brevio-core check`. Without the reason it does not count. A setting in `brevio-core.toml` does not "
+              "turn it off."),
 }

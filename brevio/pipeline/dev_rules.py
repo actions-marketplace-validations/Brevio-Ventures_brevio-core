@@ -1,12 +1,11 @@
-"""Three-layer zero-token software engineering rules engine.
+"""Zero-token software engineering rules engine.
 
 Enforces the 46-rule software engineering catalog without bloating the per-turn
 developer prompt prefix:
-- Layer 1 (0 prompt tokens): ``scan_added_lines`` runs deterministically in
-  ``build_chain._preflight_gate_failures`` over added lines in changed files.
+- Layer 1 (0 prompt tokens): ``scan_added_lines`` runs deterministically over the lines a
+  change adds, which ``brevio-core scan --surface`` reports.
 - Layer 2 (0-180 tokens): ``slice_micro_rules`` routes compact 1-line micro-cards
-  strictly to slices whose target files match the surface globs.
-- Layer 3 (0 LLM calls): plan-time guardrail seeding in ``nodes_plan``.
+  strictly to slices whose target files match the surface globs, which ``brevio-core brief`` prints.
 """
 from __future__ import annotations
 
@@ -170,7 +169,7 @@ def slice_micro_rules(files: list[str] | tuple[str, ...] | set[str]) -> str:
         )
     if not bullets:
         return ""
-    return "\nSLICE-SCOPED ENGINEERING RULES (enforced by pre-flight gate):\n" + "\n".join(bullets) + "\n"
+    return "\nSLICE-SCOPED ENGINEERING RULES FOR THESE FILES:\n" + "\n".join(bullets) + "\n"
 
 
 def _anti_slop_bullets(paths: list[str]) -> list[str]:

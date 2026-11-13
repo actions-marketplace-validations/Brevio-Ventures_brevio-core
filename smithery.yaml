@@ -5,4 +5,4 @@ startCommand:
     type: object
     properties: {}
   commandFunction: |-
-    (config) => ({ command: 'uvx', args: ['--from', 'brevio-core[mcp]==0.9.1', 'brevio-core', 'mcp'] })
+    (config) => ({ command: 'uvx', args: ['--from', 'brevio-core[mcp]==0.10.0', 'brevio-core', 'mcp'] })

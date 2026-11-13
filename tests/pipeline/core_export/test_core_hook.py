@@ -7,12 +7,14 @@ git repository, takes the command the client config names and feeds it the clien
 """
 import json
 import os
-import resource
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+
+import tests.pipeline.core_export.test_core_portable as portable
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
@@ -27,12 +29,12 @@ IGNORED = "// brevio-core: ignore R13.1 -- a test key\n" + AWS_EXAMPLE_LINE
 CURSOR_VERSION = "9.9.9"
 LATENCY_LIMIT = 1.5     # CPU seconds for a whole post-edit hook run on a 2,000-line file, interpreter start included
 _BIN = tempfile.TemporaryDirectory()
+_PATH = portable.git_only_path(_BIN.name)
 _EXPORT = tempfile.TemporaryDirectory()
 
 
 def setUpModule():
     global TREE
-    os.symlink(shutil.which("git"), os.path.join(_BIN.name, "git"))
     if os.path.isfile(EXPORTER):
         out = os.path.join(_EXPORT.name, "core")
         subprocess.run([sys.executable, EXPORTER, "--out", out, "--set", "0.4"], check=True, capture_output=True, timeout=120)
@@ -46,17 +48,11 @@ def tearDownModule():
 
 def run_cli(cwd, *args, stdin=""):
     return subprocess.run([sys.executable, "-I", "-c", _RUN, TREE, *args], cwd=cwd, input=stdin, capture_output=True,
-                          text=True, timeout=60, env={"PATH": _BIN.name, "HOME": cwd})
-
-
-def _children_cpu():
-    """User and system CPU seconds of every child this process has waited for, with their own children."""
-    usage = resource.getrusage(resource.RUSAGE_CHILDREN)
-    return usage.ru_utime + usage.ru_stime
+                          encoding="utf-8", timeout=60, env=portable.child_env(_PATH, cwd))
 
 
 def git(d, *args):
-    subprocess.run(["git", "-C", d, "-c", "user.name=t", "-c", "user.email=t@example.com", *args], check=True,
+    subprocess.run(["git", "-C", d, "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false", *args], check=True,
                    capture_output=True)
 
 
@@ -86,6 +82,12 @@ EDIT_MATCHERS = {"claude_code": "Edit|Write|MultiEdit", "cursor": "Write"}
 SHELL_MATCHERS = {"claude_code": "Bash", "cursor": "Shell"}
 
 
+def unpinned(command):
+    """``command`` without the ``==version`` pin a build that knows its release version writes (D12, 2026-11-13); the
+    tests of this file name the command the same way in a source tree, which has no version, and in a release."""
+    return re.sub(r"brevio-core==\d+\.\d+\.\d+", "brevio-core", command)
+
+
 def installed_command(d, client, event, shell=False):
     """The argument list after ``uvx brevio-core`` of the hook ``hook install`` wrote for ``client`` and ``event``: the
     entry on the edit tools, or with ``shell`` the one on the shell tool (a stop entry has no matcher)."""
@@ -97,7 +99,7 @@ def installed_command(d, client, event, shell=False):
     else:
         entries = read_json(d, ".cursor/hooks.json")["hooks"][event]
         command = next(e for e in entries if e.get("matcher", matcher) == matcher)["command"]
-    words = command.split()
+    words = unpinned(command).split()
     assert words[:2] == ["uvx", "brevio-core"], command
     return words[2:]
 
@@ -138,10 +140,10 @@ class TestTheInstalledHooks(unittest.TestCase):
             post, stop = first["hooks"]["PostToolUse"], first["hooks"]["Stop"]
             self.assertEqual([g["matcher"] for g in post], ["Edit|Write|MultiEdit", "Bash"])
             self.assertEqual([h["type"] for h in post[0]["hooks"]], ["command"])
-            self.assertEqual(post[0]["hooks"][0]["command"], "uvx brevio-core hook run --event post-edit")
-            self.assertEqual(post[1]["hooks"][0]["command"], "uvx brevio-core hook run --event post-command")
+            self.assertEqual(unpinned(post[0]["hooks"][0]["command"]), "uvx brevio-core hook run --event post-edit")
+            self.assertEqual(unpinned(post[1]["hooks"][0]["command"]), "uvx brevio-core hook run --event post-command")
             self.assertNotIn("matcher", stop[0])
-            self.assertEqual(stop[0]["hooks"][0]["command"], "uvx brevio-core hook run --event stop")
+            self.assertEqual(unpinned(stop[0]["hooks"][0]["command"]), "uvx brevio-core hook run --event stop")
             self.assertNotIn("$FILE", json.dumps(first))
             self.assertEqual(run_cli(d, "hook", "install", "--target", "claude_code").returncode, 0)
             self.assertEqual(read_json(d, ".claude/settings.json"), first)
@@ -164,10 +166,10 @@ class TestTheInstalledHooks(unittest.TestCase):
             data = read_json(d, ".cursor/hooks.json")
             self.assertEqual(data["version"], 1)
             post, stop = data["hooks"]["postToolUse"], data["hooks"]["stop"]
-            self.assertEqual([(e["matcher"], e["command"]) for e in post],
+            self.assertEqual([(e["matcher"], unpinned(e["command"])) for e in post],
                              [("Write", "uvx brevio-core hook run --event post-edit --client cursor"),
                               ("Shell", "uvx brevio-core hook run --event post-command --client cursor")])
-            self.assertEqual((stop[0]["loop_limit"], stop[0]["command"]),
+            self.assertEqual((stop[0]["loop_limit"], unpinned(stop[0]["command"])),
                              (1, "uvx brevio-core hook run --event stop --client cursor"))
             status = json.loads(run_cli(d, "hook", "status", "--json").stdout)
             self.assertEqual((status["cursor"], status["claude_code"]), (True, False))
@@ -256,6 +258,53 @@ class TestClaudeCode(unittest.TestCase):
             again = fire(d, "claude_code", "Stop", claude_stop(d, active=True))
             self.assertEqual((again.returncode, again.stdout, again.stderr), (0, "", ""))
 
+    def test_a_blocking_stop_also_writes_the_reason_to_stderr_and_still_exits_2(self):
+        """D23 (2026-11-13): the reason was only on stdout, which Claude Code does not read on exit 2."""
+        with tempfile.TemporaryDirectory() as d:
+            repo(d, src__a_ts=CLEAN)
+            write(d, "src/b.ts", AWS_EXAMPLE_LINE)
+            res = fire(d, "claude_code", "Stop", claude_stop(d))
+            self.assertEqual(res.returncode, 2)
+            self.assertEqual(res.stderr.strip(), json.loads(res.stdout)["reason"])
+            self.assertIn("src/b.ts:1 [R13.1]", res.stderr)
+            self.assertIn("Exits 0, and 2 at stop", run_cli(d, "hook", "run", "--help").stdout.replace("\n", " ").replace("  ", " "))
+
+    def test_a_cursor_stop_writes_its_follow_up_to_stderr_too(self):
+        with tempfile.TemporaryDirectory() as d:
+            repo(d, src__a_ts=CLEAN)
+            write(d, "src/b.ts", AWS_EXAMPLE_LINE)
+            res = fire(d, "cursor", "stop", cursor_event(d, "stop", status="completed", loop_count=0))
+            self.assertEqual(res.stderr.strip(), json.loads(res.stdout)["followup_message"])
+
+    def test_the_agent_cannot_silence_the_stop_hook_by_running_baseline(self):
+        """D21 and I26 (2026-11-13): after ``baseline`` the stop hook printed nothing while ``scan --diff`` reported it."""
+        with tempfile.TemporaryDirectory() as d:
+            repo(d, src__a_ts=CLEAN)
+            write(d, "src/b.py", "try:\n    save()\nexcept:\n    pass\n")
+            self.assertEqual(json.loads(fire(d, "claude_code", "Stop", claude_stop(d)).stdout)["decision"], "block")
+            self.assertEqual(run_cli(d, "baseline").returncode, 0)
+            self.assertTrue(os.path.isfile(os.path.join(d, ".brevio", "baseline.json")))
+            res = fire(d, "claude_code", "Stop", claude_stop(d))
+            self.assertEqual(res.returncode, 2, res.stderr)
+            reason = json.loads(res.stdout)["reason"]
+            self.assertIn(".brevio/baseline.json:", reason)
+            self.assertIn("[suppression]", reason)
+            self.assertIn("src/b.py", reason)
+
+    def test_an_edit_of_the_baseline_file_is_reported_at_once_and_a_committed_baseline_is_not(self):
+        with tempfile.TemporaryDirectory() as d:
+            repo(d, src__a_ts=CLEAN)
+            write(d, "src/b.py", "try:\n    save()\nexcept:\n    pass\n")
+            self.assertEqual(run_cli(d, "baseline").returncode, 0)
+            path = os.path.join(d, ".brevio", "baseline.json")
+            event = {"cwd": d, "tool_input": {"file_path": path}}
+            res = fire(d, "claude_code", "PostToolUse", event)
+            self.assertIn("[suppression]", json.loads(res.stdout)["reason"])
+            git(d, "add", "-A")
+            git(d, "commit", "-q", "-m", "a person reviewed the baseline")
+            quiet = fire(d, "claude_code", "Stop", claude_stop(d))
+            self.assertEqual((quiet.returncode, quiet.stdout), (0, ""), quiet.stderr)
+
     def test_a_clean_stop_lets_the_agent_finish(self):
         with tempfile.TemporaryDirectory() as d:
             repo(d, src__a_ts=CLEAN)
@@ -284,6 +333,29 @@ class TestClaudeCode(unittest.TestCase):
             self.assertIn("[R9.4]", parsed["reason"])
             self.assertIn("[R4.6]", parsed["reason"])
             self.assertIn("[R2.8]", parsed["reason"])
+
+
+class TestTheFixHintFitsTheLanguage(unittest.TestCase):
+    def test_a_python_file_gets_python_hints_for_a_sql_string_and_a_bare_except(self):
+        """D20 and I25 (2026-11-13): both were answered with a TypeScript example."""
+        with tempfile.TemporaryDirectory() as d:
+            repo(d, app__old_py="x = 1\n")
+            body = 'def save(cur, n):\n    cur.execute(f"SELECT * FROM t WHERE n = {n}")\n    try:\n        run()\n    except:\n        pass\n'
+            write(d, "app/new.py", body)
+            event = {"cwd": d, "tool_input": {"file_path": os.path.join(d, "app", "new.py")}}
+            reason = json.loads(fire(d, "claude_code", "PostToolUse", event).stdout)["reason"]
+            sql = next(ln for ln in reason.splitlines() if "[R2.8]" in ln)
+            bare = next(ln for ln in reason.splitlines() if "[R5.4]" in ln)
+            self.assertIn("%s", sql)
+            self.assertIn("-> except ValueError", bare)
+            self.assertNotIn("JSON.parse", reason)
+            self.assertNotIn("catch", reason)
+
+    def test_a_finding_that_has_no_example_in_the_files_language_carries_no_arrow(self):
+        with tempfile.TemporaryDirectory() as d:
+            write(d, "a.py", "def f():\n    eval(x)\n    return 1\n")
+            lines = run_cli(d, "scan", "--format", "agent", "a.py").stdout
+            self.assertNotIn(" -> ", lines)
 
 
 class TestCursor(unittest.TestCase):
@@ -400,8 +472,8 @@ class TestFailOpen(unittest.TestCase):
             repo(d)
             write(d, "a.ts", AWS_EXAMPLE_LINE)
             res = subprocess.run([sys.executable, "-I", "-c", late_wake, TREE, "--event", "stop", "--budget", "0"], cwd=d,
-                                 input=json.dumps(claude_stop(d)), capture_output=True, text=True, timeout=60,
-                                 env={"PATH": _BIN.name, "HOME": d})
+                                 input=json.dumps(claude_stop(d)), capture_output=True, encoding="utf-8", timeout=60,
+                                 env=portable.child_env(_PATH, d))
             self.assertEqual((res.returncode, res.stdout), (0, ""), res.stderr)
             self.assertEqual(res.stderr, "brevio-core hook: skipped, the scan took longer than 0 s\n")
 
@@ -415,6 +487,22 @@ class TestFailOpen(unittest.TestCase):
             self.assertIn("skipped after an internal error", res.stderr)
 
 
+class TestAnEditedFileOnAnotherDrive(unittest.TestCase):
+    def test_a_file_that_has_no_path_relative_to_the_project_is_not_scanned_and_does_not_crash_the_hook(self):
+        """On Windows ``os.path.relpath`` raises ``ValueError`` for two drives; the file is outside the project."""
+        script = ("import os, sys; sys.path.insert(0, sys.argv[1])\n"
+                  "from brevio.pipeline import core_hook\n"
+                  "def other_drive(*args, **kwargs):\n    raise ValueError(\"path is on mount 'C:', start on mount 'D:'\")\n"
+                  "os.path.relpath = other_drive\n"
+                  "event = core_hook.Event('claude_code', 'post-edit', os.path.join(os.getcwd(), 'a.ts'), os.getcwd(), False)\n"
+                  "print(core_hook.changed_lines(event))\n")
+        with tempfile.TemporaryDirectory() as d:
+            write(d, "a.ts", AWS_EXAMPLE_LINE)
+            res = subprocess.run([sys.executable, "-I", "-c", script, TREE], cwd=d, capture_output=True, encoding="utf-8",
+                                 timeout=60, env=portable.child_env(_PATH, d))
+        self.assertEqual((res.returncode, res.stdout.strip()), (0, "{}"), res.stderr)
+
+
 class TestLatency(unittest.TestCase):
     def test_a_post_edit_hook_on_a_2000_line_file_finishes_well_inside_its_budget(self):
         with tempfile.TemporaryDirectory() as d:
@@ -425,12 +513,12 @@ class TestLatency(unittest.TestCase):
             event = {**claude_edit(d, "src/big.ts", "\0", "\0"), "tool_input": {"file_path": path}}
             self.assertEqual(run_cli(d, "hook", "install", "--target", "claude_code").returncode, 0)
             argv = installed_command(d, "claude_code", "PostToolUse")
-            # The CPU time of the hook process and the git it runs, not the wall clock: on a loaded machine
+            # The CPU time of the hook process (and, on POSIX, the git it runs), not the wall clock: on a loaded machine
             # the wall clock measured the other processes (1.68 s under the parallel suite). The hook's own
             # wall-clock budget is lifted for the same reason; its fail-open has a test of its own.
-            start = _children_cpu()
-            res = run_cli(d, *argv, "--budget", "60", stdin=json.dumps(event))
-            took = _children_cpu() - start
+            res, took = portable.run_with_cpu([sys.executable, "-I", "-c", _RUN, TREE, *argv, "--budget", "60"], cwd=d,
+                                              input=json.dumps(event), capture_output=True, encoding="utf-8", timeout=60,
+                                              env=portable.child_env(_PATH, d))
             self.assertIn("src/big.ts:2000 [R13.1]", json.loads(res.stdout)["reason"], res.stderr)
             self.assertLess(took, LATENCY_LIMIT)
 

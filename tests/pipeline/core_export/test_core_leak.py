@@ -77,5 +77,41 @@ class TestChecks(unittest.TestCase):
             self.assertIn("NOTES.md: internal path: " + "tools" + "/release/README.md", leak_scan.scan_tree(d))
 
 
+class TestThePrecisionFiles(unittest.TestCase):
+    """The precision run names its corpus and quotes third-party code (improvement plan 2a, 2026-11-12)."""
+
+    def write(self, d, rel, text):
+        os.makedirs(os.path.dirname(os.path.join(d, rel)), exist_ok=True)
+        with open(os.path.join(d, rel), "w", encoding="utf-8") as fh:
+            fh.write(text)
+
+    def test_the_address_of_a_corpus_repository_is_allowed_and_a_look_alike_is_not(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.write(d, leak_scan.CORPUS_FILE, '{"repos": [{"name": "Acme-Labs/widgets"}, {"name": "bad name"}, 7]}')
+            self.assertEqual(leak_scan.corpus_urls(d), ("github.com/acme-labs/widgets",))
+            self.write(d, "docs/precision.md", f"{HTTPS}github.com/Acme-Labs/widgets and {HTTPS}github.com/Acme-Labs/widgets/tree/main")
+            self.assertEqual(leak_scan.scan_tree(d), [])
+            self.write(d, "docs/other.md", f"{HTTPS}github.com/Acme-Labs/widgets-fork and {HTTPS}github.com/someone/else")
+            self.assertEqual(leak_scan.scan_tree(d), [f"docs/other.md: url: {HTTPS}github.com/Acme-Labs/widgets-fork",
+                                                      f"docs/other.md: url: {HTTPS}github.com/someone/else"])
+
+    def test_a_tree_with_no_corpus_file_or_a_broken_one_allows_no_extra_address(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(leak_scan.corpus_urls(d), ())
+            self.write(d, leak_scan.CORPUS_FILE, "not json")
+            self.assertEqual(leak_scan.corpus_urls(d), ())
+            self.write(d, "docs/precision.md", f"{HTTPS}github.com/Acme-Labs/widgets")
+            self.assertEqual(len(leak_scan.scan_tree(d)), 1)
+
+    def test_the_quoted_third_party_sample_is_not_read_for_urls_but_another_file_still_is(self):
+        with tempfile.TemporaryDirectory() as d:
+            quoted = f'{{"context": ["1: see {HTTPS}example.org/issue/7"]}}\n'
+            for rel in leak_scan.QUOTED_DATA:
+                self.write(d, rel, quoted)
+            self.assertEqual(leak_scan.scan_tree(d), [])
+            self.write(d, "docs/notes.jsonl", quoted)
+            self.assertEqual(leak_scan.scan_tree(d), [f"docs/notes.jsonl: url: {HTTPS}example.org/issue/7"])
+
+
 if __name__ == "__main__":
     unittest.main()

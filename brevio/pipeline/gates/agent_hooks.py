@@ -208,6 +208,7 @@ def install_all_hooks(
     target_only_detected: bool = False,
     targets: Sequence[str] | None = None,
     force_all: bool = False,
+    version: str | None = None,
 ) -> dict[str, bool]:
     """Install hooks across agents.
 
@@ -216,16 +217,24 @@ def install_all_hooks(
     """
     workspace = _workspace_dir(cwd)
     if (target_only_detected or targets is not None) and not force_all:
-        return install_targeted_hooks(workspace, targets=targets)
+        return install_targeted_hooks(workspace, targets=targets, version=version)
 
     hermes_ok = _install_hermes_skill(workspace)
     openclaw_ok = _install_openclaw_skill(workspace)
     return {
-        "claude_code": _install_claude_hook(workspace),
-        "cursor": _install_cursor_hook(workspace),
+        "claude_code": _install_claude_hook(workspace, version),
+        "cursor": _install_cursor_hook(workspace, version),
         "hermes": hermes_ok,
         "openclaw": openclaw_ok,
     }
+
+
+def hook_files(results: dict[str, bool]) -> list[str]:
+    """What an install wrote, one line per hook file: ``.claude/settings.json: 3 hooks`` (the other agents get a skill)."""
+    files = {"claude_code": (os.path.join(CLAUDE_SETTINGS_DIR, CLAUDE_SETTINGS_FILE), claude_hooks()),
+             "cursor": (CURSOR_HOOKS_FILE, cursor_hooks())}
+    return [f"{path.replace(os.sep, '/')}: {sum(len(v) for v in hooks.values())} hooks" for name, (path, hooks) in files.items()
+            if results.get(name)]
 
 
 def get_hooks_status(cwd: str | None = None) -> dict[str, bool]:

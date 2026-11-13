@@ -23,7 +23,7 @@ The same skill is published to the skill registry with each release, so it can b
 Add brevio-core where your OpenClaw configuration lists MCP servers, with this command and these arguments:
 
 ```json
-{ "brevio-core": { "command": "uvx", "args": ["brevio-core==0.9.1", "mcp"] } }
+{ "brevio-core": { "command": "uvx", "args": ["brevio-core==0.10.0", "mcp"] } }
 ```
 
 `scan`, the agent hook and the MCP server use no network and send nothing.
@@ -31,4 +31,4 @@ Add brevio-core where your OpenClaw configuration lists MCP servers, with this c
 ## What the agent sees
 
 The skill tells the agent to scan the files it changed with `brevio-core scan` and to fix each finding in the code
-rather than silence it. There is no hook after each edit, so the pull-request check is the backstop.
+rather than silence it. brevio-core installs no hook after each edit for OpenClaw, so the pull-request check is the backstop.

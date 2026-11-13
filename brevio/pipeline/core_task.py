@@ -11,20 +11,22 @@ import argparse
 import json
 import os
 import re
+import sys
 from typing import Any
 
-from brevio.pipeline import core_heal, core_init, core_map, core_memory, core_score
+from brevio.pipeline import core_heal, core_init, core_map, core_memory, core_platform, core_score
 from brevio.pipeline.gates import core_gates
 
+MAX_SHOWN = 10      # findings a failed qa or pr prints; the rest are in .brevio/qa_report.json
 HELP = "run the single-task local workflow (connect -> plan -> build -> qa -> pr)"
 PLAN_HELP = "create a single-task implementation plan (.brevio/task_plan.json & .brevio/TASK_PLAN.md)"
 BUILD_HELP = "execute single-task build preparation and deterministic auto-fixes"
-QA_HELP = "run the single-task pre-PR quality gates and safety scorecard"
+QA_HELP = "run the single-task pre-PR quality gates and count the findings (of the task's diff; --all counts the whole repository)"
 PR_HELP = "verify QA gates and generate a pull-request receipt (.brevio/PR_BODY.md)"
-CONNECT_HELP = "detect stack and coding clients and export CLAUDE.md, CONSTITUTION.md & roadmap.json"
+CONNECT_HELP = "detect stack and coding clients and write CLAUDE.md, CONSTITUTION.md & roadmap.json (--dry-run lists them first)"
 
 
-def scaffold_specs(root: str = ".", force: bool = False) -> dict[str, Any]:
+def scaffold_specs(root: str = ".", force: bool = False, dry_run: bool = False) -> dict[str, Any]:
     """Detect stack and coding clients, and scaffold starter spec files."""
     abs_root = os.path.abspath(root)
     stack = core_init.detect_stack(abs_root)
@@ -39,8 +41,9 @@ def scaffold_specs(root: str = ".", force: bool = False) -> dict[str, Any]:
     for fname in ("CONSTITUTION.md", "CLAUDE.md", "roadmap.json"):
         fpath = os.path.join(abs_root, fname)
         if force or not os.path.exists(fpath):
-            with open(fpath, "w", encoding="utf-8") as fh:
-                fh.write(specs[fname])
+            if not dry_run:
+                with open(fpath, "w", encoding="utf-8") as fh:
+                    fh.write(specs[fname])
             written.append(fname)
         else:
             skipped.append(fname)
@@ -56,11 +59,12 @@ def scaffold_specs(root: str = ".", force: bool = False) -> dict[str, Any]:
     }
 
 
-def run_connect(root: str = ".", force: bool = False) -> dict[str, Any]:
-    """Connect repository: detect stack & agents, scaffold specs, and write connection.json."""
-    specs_res = scaffold_specs(root=root, force=force)
+def run_connect(root: str = ".", force: bool = False, dry_run: bool = False) -> dict[str, Any]:
+    """Connect repository: detect stack & agents, scaffold specs, and write connection.json (nothing with ``dry_run``)."""
+    specs_res = scaffold_specs(root=root, force=force, dry_run=dry_run)
     brevio_dir = os.path.join(root, ".brevio")
-    os.makedirs(brevio_dir, exist_ok=True)
+    if not dry_run:
+        os.makedirs(brevio_dir, exist_ok=True)
     conn = {
         "ok": True,
         "root": specs_res["root"],
@@ -76,6 +80,9 @@ def run_connect(root: str = ".", force: bool = False) -> dict[str, Any]:
         "written": specs_res["written"],
         "skipped": specs_res["skipped"],
     }
+    if dry_run:
+        conn["dry_run"] = True
+        return conn
     conn_path = os.path.join(brevio_dir, "connection.json")
     with open(conn_path, "w", encoding="utf-8") as fh:
         json.dump(conn, fh, indent=2)
@@ -141,7 +148,7 @@ def run_plan(task: str | None = None, root: str = ".", budget: int = 2000) -> di
     default_criteria = [
         "Pass brevio-core scan --diff HEAD with 0 findings",
         "Pass pre-PR check gates",
-        "Achieve Agent Safety Score >= 80",
+        "Pass brevio-core score with 0 findings",
     ]
     task_id, title, criteria = _resolve_task_target(task, items, default_criteria)
 
@@ -164,6 +171,7 @@ def run_plan(task: str | None = None, root: str = ".", budget: int = 2000) -> di
         "target_files": top_files,
         "ranked_symbols": ranked_count,
         "applicable_rules": applicable_rules,
+        "diff_base": _head_commit(root),
         "status": "planned",
         "plan_json": ".brevio/task_plan.json",
         "plan_md": ".brevio/TASK_PLAN.md",
@@ -200,9 +208,15 @@ def run_plan(task: str | None = None, root: str = ".", budget: int = 2000) -> di
         "target_files": top_files,
         "ranked_symbols": ranked_count,
         "applicable_rules": applicable_rules,
+        "diff_base": plan_data["diff_base"],
         "plan_json": ".brevio/task_plan.json",
         "plan_md": ".brevio/TASK_PLAN.md",
     }
+
+
+def _head_commit(root: str) -> str:
+    """The commit the task starts from ("" when there is none): ``qa`` scores what the task changed since then."""
+    return core_gates._git(root, "rev-parse", "--verify", "-q", "HEAD").strip()
 
 
 def _load_task_plan(plan_path: str) -> dict[str, Any]:
@@ -247,7 +261,9 @@ def run_build(task: str | None = None, root: str = ".", apply_fixes: bool = True
     if not plan or task is not None:
         plan = run_plan(task=task, root=root)
 
-    heal_res = core_heal.run_heal(root=root, apply_fixes=apply_fixes)
+    # No guards are compiled here: the working-tree diff holds the task's own outputs, and a guard learned from them (or an
+    # active guard with no pattern) would join the repository's guard set on every run (2026-11-13).
+    heal_res = core_heal.run_heal(root=root, apply_fixes=apply_fixes, compile_guards=False)
     fixed_files = heal_res.get("fixed_files") or heal_res.get("auto_fixed_files", [])
     fixed_rules = heal_res.get("fixed_rules", heal_res.get("auto_fixed_count", 0))
     remaining_count = heal_res.get("remaining_count", len(heal_res.get("remaining_findings", [])))
@@ -297,11 +313,19 @@ def run_build(task: str | None = None, root: str = ".", apply_fixes: bool = True
     }
 
 
-def run_qa(root: str = ".", diff_base: str | None = None) -> dict[str, Any]:
-    """Run pre-PR quality gates and Agent Safety Scorecard."""
-    base_ref = diff_base if diff_base else "HEAD"
+def run_qa(root: str = ".", diff_base: str | None = None, whole: bool = False) -> dict[str, Any]:
+    """Run the pre-PR quality gates and count the findings (no score or grade, 2026-11-12).
+
+    By default the count is the task's own diff, as ``check`` reads it: counting the whole repository let one old finding
+    stop every task from passing (2026-11-11). ``whole`` counts every file, which is what 0.9.1 did (2026-11-13)."""
+    plan = _load_task_plan(os.path.join(root, ".brevio", "task_plan.json"))
+    base_ref = diff_base or str(plan.get("diff_base") or "")      # empty: the base of ``scan --diff`` (origin/main, main, HEAD; I10)
     check_res = core_gates.run_check(root=root, base=base_ref)
-    score_res = core_score.score_repository(root=root)
+    used = str(check_res.get("base") or base_ref)       # the base ``check`` really read, also when none was named
+    no_base = not whole and not core_gates._git(root, "rev-parse", "--verify", "-q", used).strip()
+    score_res = core_score.score_repository(root=root, diff_base=None if whole or no_base else used)
+    scope = ("the whole repository (there is no commit to compare with)" if no_base
+             else "the whole repository" if whole else f"changes since {used[:12]}")
 
     gate_ok = bool(check_res.get("ok", check_res.get("passed", False)))
     finding_count = int(score_res.get("finding_count", len(score_res.get("findings", []))))
@@ -311,9 +335,9 @@ def run_qa(root: str = ".", diff_base: str | None = None) -> dict[str, Any]:
     qa_report = {
         "ok": ok,
         "gate_ok": gate_ok,
-        "score": int(score_res.get("score", 0)),
-        "grade": str(score_res.get("grade", "F")),
         "finding_count": finding_count,
+        "base": check_res.get("base", ""),
+        "scope": scope,
         "gates": check_res.get("checks", {}),
         "findings": all_findings,
     }
@@ -328,27 +352,17 @@ def run_qa(root: str = ".", diff_base: str | None = None) -> dict[str, Any]:
     return qa_report
 
 
-def run_pr(title: str | None = None, root: str = ".", diff_base: str | None = None) -> dict[str, Any]:
+def run_pr(title: str | None = None, root: str = ".", diff_base: str | None = None, whole: bool = False) -> dict[str, Any]:
     """Verify QA gates and generate PR body (.brevio/PR_BODY.md)."""
     brevio_dir = os.path.join(root, ".brevio")
     plan_path = os.path.join(brevio_dir, "task_plan.json")
     plan = _load_task_plan(plan_path)
 
-    qa = run_qa(root=root, diff_base=diff_base)
+    qa = run_qa(root=root, diff_base=diff_base, whole=whole)
     pr_title = title or plan.get("task") or "chore: pass brevio-core single-task QA gates"
     task_id = plan.get("task_id", "TASK-001")
 
     verdict = "PASS" if qa["ok"] else "FAIL"
-    score = qa["score"]
-    grade = qa["grade"]
-    color = "brightgreen" if score >= 80 else "yellow" if score >= 60 else "red"
-    grade_enc = grade.replace("+", "%2B")
-    badge_md = (
-        f"[![Agent Safety: {grade} ({score}/100)]"
-        f"(https://img.shields.io/badge/agent%20safety-{grade_enc}%20({score}%2F100)-{color})]"
-        f"(https://brevio.pro)"
-    )
-
     body_md = (
         f"# {pr_title}\n\n"
         "## Summary\n"
@@ -360,14 +374,12 @@ def run_pr(title: str | None = None, root: str = ".", diff_base: str | None = No
         "1. `connect`: Stack & agents detected, starter specs verified\n"
         "2. `plan`: PageRank symbol ranking & surface rules gathered\n"
         "3. `build`: Build preparation & deterministic auto-fixes applied\n"
-        "4. `qa`: Quality flight gates & safety scorecard verified\n"
+        "4. `qa`: Quality flight gates and finding count checked\n"
         "5. `pr`: Pull-request receipt synthesized\n\n"
         "## QA Gate Verdict\n"
         f"- Gate Status: **{verdict}**\n"
         f"- Flight Gates: {'PASSED' if qa['gate_ok'] else 'FAILED'}\n"
-        f"- Agent Safety Score: **{score}/100** (Grade: **{grade}**)\n"
         f"- Code Findings: {qa['finding_count']}\n\n"
-        f"{badge_md}\n\n"
         "## Verification Checklist\n"
         f"- [{'x' if qa['gate_ok'] else ' '}] Pre-PR flight checks passed\n"
         f"- [{'x' if qa['finding_count'] == 0 else ' '}] Zero code rule findings\n"
@@ -385,10 +397,9 @@ def run_pr(title: str | None = None, root: str = ".", diff_base: str | None = No
         "ok": qa["ok"],
         "title": pr_title,
         "task_id": task_id,
-        "score": qa["score"],
-        "grade": qa["grade"],
         "pr_body_path": ".brevio/PR_BODY.md",
         "pr_body": body_md,
+        "findings": qa["findings"],
         "gh_command": f'gh pr create --title "{pr_title}" --body-file .brevio/PR_BODY.md',
     }
 
@@ -415,21 +426,71 @@ def run_pipeline(
     }
 
 
+def _show_findings(findings: list[str], out: Any = None) -> None:
+    """Print up to ``MAX_SHOWN`` findings, one per line, and how many more the report holds."""
+    for f in findings[:MAX_SHOWN]:
+        print(f"  {f}", file=out)
+    if len(findings) > MAX_SHOWN:
+        print(f"  ... and {len(findings) - MAX_SHOWN} more", file=out)
+
+
+def _agreed(yes: bool) -> bool:
+    """True when ``--yes`` was given, there is no terminal to ask (0.9.1 behaviour), or the person answers y."""
+    if yes or not core_platform.is_terminal(sys.stdin):
+        return True
+    try:
+        return input("Write these files? [y/N] ").strip().lower() in ("y", "yes")
+    except EOFError:
+        return False
+
+
+def _pr_tail(pr: dict[str, Any]) -> None:
+    """The lines after a pr verdict: the receipt and the command on PASS; the findings and the next step on FAIL."""
+    print(f"  PR body written: {pr.get('pr_body_path', '.brevio/PR_BODY.md')}")
+    if pr.get("ok"):
+        print(f"  Command: {pr.get('gh_command', '')}")
+        return
+    _show_findings(list(pr.get("findings", [])))
+    print("  Fix the findings above, run qa, then pr.")
+
+
+def _files_written(res: dict[str, Any]) -> None:
+    """What ``task`` wrote besides the receipt: the spec files, the plan and packet, and any source file it fixed."""
+    names = list(res.get("connect", {}).get("written", [])) + [".brevio/connection.json", ".brevio/task_plan.json",
+                                                              ".brevio/TASK_PLAN.md", ".brevio/BUILD_PACKET.md", ".brevio/qa_report.json"]
+    print(f"  Wrote: {', '.join(names)}")
+    fixed = res.get("build", {}).get("fixed_files", [])
+    if fixed:
+        print(f"  Rewrote source: {', '.join(fixed)}")
+
+
 def main_connect(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="brevio-core connect", description=CONNECT_HELP)
     ap.add_argument("--root", default=".", help="repository root (default: .)")
     ap.add_argument("--force", action="store_true", help="overwrite existing spec files")
+    ap.add_argument("--dry-run", action="store_true", help="list the files it would write and write nothing")
+    ap.add_argument("--yes", action="store_true", help="write without asking (a terminal is asked first, a pipe is not)")
     ap.add_argument("--json", action="store_true", help="output JSON")
     args = ap.parse_args(argv)
-    res = run_connect(root=args.root, force=args.force)
-    if args.json:
-        print(json.dumps(res, indent=2))
-    else:
+    res = run_connect(root=args.root, force=args.force, dry_run=True)
+    dry = args.dry_run
+    if not dry and res["written"] and not args.json and not args.yes and core_platform.is_terminal(sys.stdin):
         stk = ", ".join(res["stack"]) or "generic"
         print(f"brevio-core connect: project={res['project']} stack={stk}")
-        print(f"  Written specs: {', '.join(res['written']) or 'none'}")
-        if res["skipped"]:
-            print(f"  Skipped (existing): {', '.join(res['skipped'])}")
+        print(f"  Would write: {', '.join(res['written'])}, .brevio/connection.json")
+        dry = not _agreed(False)
+    if not dry:
+        res = run_connect(root=args.root, force=args.force)
+    if args.json:
+        print(json.dumps(res, indent=2))
+        return 0
+    stk = ", ".join(res["stack"]) or "generic"
+    print(f"brevio-core connect: project={res['project']} stack={stk}")
+    verb = "Would write (dry run, nothing written)" if dry else "Written specs"
+    print(f"  {verb}: {', '.join(res['written']) or 'none'}")
+    print("  Would write: .brevio/connection.json" if dry else "  Written: .brevio/connection.json")
+    if res["skipped"]:
+        print(f"  Skipped (existing): {', '.join(res['skipped'])}")
     return 0
 
 
@@ -468,6 +529,8 @@ def main_build(argv: list[str] | None = None) -> int:
     else:
         print(f"brevio-core build: [{res['task_id']}] {res['task']}")
         print(f"  Fixed files: {len(res['fixed_files'])} | Fixed rules: {res['fixed_rules']} | Remaining: {res['remaining_findings']}")
+        if res["fixed_files"]:
+            print(f"  Rewrote: {', '.join(res['fixed_files'])}")
         print(f"  Build packet: {res['build_packet']}")
     return 0
 
@@ -476,14 +539,18 @@ def main_qa(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="brevio-core qa", description=QA_HELP)
     ap.add_argument("--root", default=".", help="repository root (default: .)")
     ap.add_argument("--diff", dest="diff_base", default=None, help="base ref to diff against")
+    ap.add_argument("--all", dest="whole", action="store_true", help="count the whole repository, not only the task's changes (the 0.9.1 count)")
     ap.add_argument("--json", action="store_true", help="output JSON")
     args = ap.parse_args(argv)
-    res = run_qa(root=args.root, diff_base=args.diff_base)
+    res = run_qa(root=args.root, diff_base=args.diff_base, whole=args.whole)
     if args.json:
         print(json.dumps(res, indent=2))
     else:
         status_str = "PASS" if res["ok"] else "FAIL"
-        print(f"brevio-core qa: {status_str} | Score: {res['score']}/100 (Grade: {res['grade']}) | Findings: {res['finding_count']}")
+        print(f"brevio-core qa: {status_str} | Findings: {res['finding_count']} | Counted: {res['scope']}")
+        if not res["ok"]:
+            _show_findings(res["findings"])
+            print("  Details: .brevio/qa_report.json")
     return 0 if res["ok"] else 1
 
 
@@ -493,17 +560,17 @@ def main_pr(argv: list[str] | None = None) -> int:
     ap.add_argument("--title", dest="title_flag", default=None, help="PR title")
     ap.add_argument("--root", default=".", help="repository root (default: .)")
     ap.add_argument("--diff", dest="diff_base", default=None, help="base ref to diff against")
+    ap.add_argument("--all", dest="whole", action="store_true", help="count the whole repository, not only the task's changes")
     ap.add_argument("--json", action="store_true", help="output JSON")
     args = ap.parse_args(argv)
     pr_title = args.title or args.title_flag
-    res = run_pr(title=pr_title, root=args.root, diff_base=args.diff_base)
+    res = run_pr(title=pr_title, root=args.root, diff_base=args.diff_base, whole=args.whole)
     if args.json:
         print(json.dumps(res, indent=2))
     else:
         status_str = "PASS" if res["ok"] else "FAIL"
         print(f"brevio-core pr: {status_str} [{res['task_id']}] {res['title']}")
-        print(f"  PR body written: {res['pr_body_path']}")
-        print(f"  Command: {res['gh_command']}")
+        _pr_tail(res)
     return 0 if res["ok"] else 1
 
 
@@ -524,6 +591,6 @@ def main(argv: list[str] | None = None) -> int:
         pr = res.get("pr", {})
         status_str = "PASS" if res.get("ok") else "FAIL"
         print(f"brevio-core task: {status_str} [{pr.get('task_id', 'TASK-001')}] {pr.get('title', '')}")
-        print(f"  PR receipt: {pr.get('pr_body_path', '.brevio/PR_BODY.md')}")
-        print(f"  Command: {pr.get('gh_command', '')}")
+        _pr_tail(pr)
+        _files_written(res)
     return 0 if res.get("ok") else 1

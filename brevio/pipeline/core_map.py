@@ -11,7 +11,10 @@ from typing import Any
 
 HELP = "build a zero-token Personalized PageRank repository symbol map and index"
 
+_AGENTS_DIR = "." + "agents"      # the same spelling as core_cli.SKIP_DIRS (public pull request #11)
 IGNORED_DIRS = frozenset({
+    _AGENTS_DIR,
+    ".brevio",
     ".git",
     "__pycache__",
     "node_modules",
@@ -573,6 +576,7 @@ def build_repo_map(
             for d in dirnames
             if d not in IGNORED_DIRS
             and not os.path.islink(os.path.join(dirpath, d))
+            and not os.path.exists(os.path.join(dirpath, d, ".git"))     # a nested checkout is another project (2026-11-12)
         ])
         for fn in sorted(filenames):
             if fn.endswith(VALID_EXTENSIONS):

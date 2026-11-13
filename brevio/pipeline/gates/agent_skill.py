@@ -61,7 +61,7 @@ def _sanitize(text: str) -> tuple[bool, str]:
 
 
 AGENT_RULES = """- After you edit code, scan the files you changed: `brevio-core scan <files>`.
-- Fix every finding in the code itself, also those the agent hook reports after an edit or before you stop.
+- Fix a finding in the code itself, also one the agent hook reports after an edit or before you stop.
 - Never add an ignore comment and never edit `.brevio/baseline.json` to make a finding go away.
 - When you cannot fix a finding, stop and tell the human the rule and the line.
 - After you fix a bug, run `brevio-core learn` so the fix becomes a guard.
@@ -85,7 +85,7 @@ no network and send nothing.
 
 - After you edit or create code files: scan what you touched.
 - Before you run the test suite or open a pull request: scan the whole change.
-- After you fix a bug that escaped: compile the fix into a guard so it cannot return.
+- After you fix a bug that escaped: compile the fix into a guard, so a scan reports the line if it comes back.
 
 ## Commands
 
@@ -94,17 +94,16 @@ brevio-core scan src/                  # files or folders
 brevio-core scan --diff origin/main    # only the lines added against a base
 brevio-core scan --diff --sarif out.sarif
 brevio-core learn                      # compile the last commit's fix into a guard
-brevio-core learn --check src/a.py     # run the learned guards over whole files
+brevio-core learn --check src/a.py     # run the learned guards over whole files (scan reports them too)
 brevio-core add                        # list the curated guard packs
 brevio-core hook install               # wire the scan into the coding agents found here
-brevio-core gain                       # print the receipt of what the guards caught
+brevio-core gain                       # print the counts the local ledger recorded
 brevio-core mcp                        # serve these tools over MCP on stdin and stdout
 ```
 
 If the command is not on the path, put `uvx` in front of it.
 
 The MCP server offers `scan`, `explain`, `list_rules` and `learn` as tools, so an agent can call them without a shell.
-Agent commands also support `map` for symbol dependency graphs, `heal` for automated code remediation, and `roast` for safety posture verdicts.
 
 ## How to read findings
 

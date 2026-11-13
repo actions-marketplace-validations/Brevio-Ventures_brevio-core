@@ -9,6 +9,7 @@ import sys
 import tempfile
 import unittest
 
+from brevio.pipeline import core_sarif
 from brevio.pipeline.code_rules import PR_RULES_122
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -17,12 +18,13 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
 # itself a finding of a secret scan. The hardcoded-secret rule (R13.1) flags the format (E35 precision run, 2026-11-05).
 AWS_EXAMPLE_LINE = "const apiKey = '" + "AKIA" + "IOSFODNN7EXAMPLE" + "';\n"
 CLEAN_LINE = "export const add = (a: number, b: number): number => a + b;\n"
+GITHUB = "https" + "://github.com/"      # joined: the export check refuses a literal address
 _RUN = "import sys; sys.path.insert(0, sys.argv[1]); from brevio.pipeline import core_cli; raise SystemExit(core_cli.main(sys.argv[2:]))"
 
 
 def run_cli(cwd, *args):
     """``brevio-core`` with ``args`` in ``cwd``, under ``python -I`` so nothing but the standard library and ROOT loads."""
-    return subprocess.run([sys.executable, "-I", "-c", _RUN, ROOT, *args], cwd=cwd, capture_output=True, text=True, timeout=60)
+    return subprocess.run([sys.executable, "-I", "-c", _RUN, ROOT, *args], cwd=cwd, capture_output=True, encoding="utf-8", timeout=60)
 
 
 def write(d, rel, text):
@@ -33,7 +35,7 @@ def write(d, rel, text):
 
 
 def git(d, *args):
-    subprocess.run(["git", "-C", d, "-c", "user.name=t", "-c", "user.email=t@example.com", *args], check=True, capture_output=True)
+    subprocess.run(["git", "-C", d, "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false", *args], check=True, capture_output=True)
 
 
 class TestScanCommand(unittest.TestCase):
@@ -44,10 +46,8 @@ class TestScanCommand(unittest.TestCase):
             bad = run_cli(d, "scan", "src/bad.ts")
             self.assertEqual(bad.returncode, 1, bad.stderr)
             self.assertIn("src/bad.ts:1: [R13.1]", bad.stdout)
-            self.assertIn(
-                "Explain & test fix: brevio-core explain R13.1 | https://brevio.pro/tools/agent-guard-playground?rule=R13.1",
-                bad.stderr,
-            )
+            self.assertIn("Explain: brevio-core explain R13.1", bad.stderr)
+            self.assertNotIn("https://", bad.stderr)        # the playground link went: the page is not in this repository (2026-11-12)
             self.assertEqual(run_cli(d, "scan", "src/ok.ts").returncode, 0)
 
     def test_a_diff_scan_skips_build_output(self):
@@ -146,6 +146,60 @@ class TestScanCommand(unittest.TestCase):
             self.assertEqual(hit["locations"][0]["physicalLocation"]["region"]["startLine"], 2)
             self.assertEqual(len(log["runs"][0]["tool"]["driver"]["rules"]), len(PR_RULES_122))
 
+    def test_the_sarif_rules_name_the_command_that_prints_the_rule_page_and_link_only_the_tag_of_a_release(self):
+        """The rules held a ``helpUri`` to a page on a website that this repository does not show (2026-11-12). Changed on
+        purpose (2026-11-13, revisit I39): a tree that is a release on GitHub links the page of the rule at the tag of its
+        version, which the repository does show; a tree that is not a release writes no link."""
+        with tempfile.TemporaryDirectory() as d:
+            write(d, "src/bad.ts", AWS_EXAMPLE_LINE)
+            run_cli(d, "scan", "src/bad.ts", "--sarif", "out.sarif")
+            with open(os.path.join(d, "out.sarif"), encoding="utf-8") as fh:
+                text = fh.read()
+            rules = json.loads(text)["runs"][0]["tool"]["driver"]["rules"]
+        uris = [r["helpUri"] for r in rules if "helpUri" in r]
+        if not os.path.isfile(os.path.join(ROOT, "VERSION")):
+            self.assertEqual(uris, [])
+            self.assertNotIn("https://", text)
+        else:
+            self.assertTrue(all(u.startswith(GITHUB) and "/blob/v" in u and u.endswith(".md") for u in uris), uris[:2])
+        self.assertEqual(next(r for r in rules if r["id"] == "R13.1")["help"]["text"], "brevio-core explain R13.1 prints the rule page.")
+
+    def test_a_rule_outside_the_catalogue_is_declared_and_each_result_carries_the_index_of_its_rule(self):
+        """``suppression`` and ``guard:<id>`` results named rules that ``tool.driver.rules`` did not hold (revisit D31)."""
+        rules = [{"id": "R1.1", "shortDescription": {"text": "one"}}, {"id": "R1.2", "shortDescription": {"text": "two"}}]
+        results = [{"ruleId": "R1.2", "level": "error"}, {"ruleId": "suppression", "level": "error"},
+                   {"ruleId": "guard:no-eval", "level": "warning"}, {"ruleId": "suppression", "level": "error"}]
+        driver = core_sarif.log(results, rules)["runs"][0]["tool"]["driver"]
+        ids = [r["id"] for r in driver["rules"]]
+        self.assertEqual(ids, ["R1.1", "R1.2", "suppression", "guard:no-eval"])
+        self.assertEqual([r["ruleIndex"] for r in results], [1, 2, 3, 2])
+        by_id = {r["id"]: r for r in driver["rules"]}
+        self.assertEqual(by_id["guard:no-eval"]["defaultConfiguration"]["level"], "warning")
+        self.assertIn("no-eval", by_id["guard:no-eval"]["shortDescription"]["text"])
+        self.assertNotIn("version", driver)
+        self.assertEqual(rules, [{"id": "R1.1", "shortDescription": {"text": "one"}}, {"id": "R1.2", "shortDescription": {"text": "two"}}])
+
+    def test_an_id_outside_the_catalogue_is_not_described_as_a_suppression(self):
+        """A finding line without a rule tag (rule ``brevio-core``) or of a removed rule was declared with the text of the
+        ``suppression`` rule, which was untrue (second review of revisit D31)."""
+        log = core_sarif.log([{"ruleId": "brevio-core", "level": "error"}, {"ruleId": "suppression", "level": "error"}], [])
+        by_id = {r["id"]: r for r in log["runs"][0]["tool"]["driver"]["rules"]}
+        self.assertNotIn("suppression", by_id["brevio-core"]["shortDescription"]["text"].lower())
+        self.assertNotIn("baseline", by_id["brevio-core"]["help"]["text"])
+        self.assertIn("ignore comment", by_id["suppression"]["shortDescription"]["text"])
+
+    def test_a_release_on_github_names_its_version_and_links_each_rule_page_at_its_tag(self):
+        """The link is written for a release only, and only on GitHub, where the tag of the version holds ``docs/rules``."""
+        rel = type("Release", (), {"repo_url": GITHUB + "acme/brevio-core/", "version": "1.2.3"})()
+        log = core_sarif.log([{"ruleId": "suppression"}], [{"id": "R9.2"}], rel)
+        driver = log["runs"][0]["tool"]["driver"]
+        self.assertEqual(driver["version"], "1.2.3")
+        self.assertEqual(driver["rules"][0]["helpUri"], GITHUB + "acme/brevio-core/blob/v1.2.3/docs/rules/R9.2.md")
+        self.assertNotIn("helpUri", driver["rules"][1])        # the suppression rule has no page
+        self.assertNotIn("informationUri", driver)
+        elsewhere = type("Release", (), {"repo_url": "https" + "://git.example.org/acme/brevio-core", "version": "1.2.3"})()
+        self.assertNotIn("helpUri", core_sarif.log([], [{"id": "R9.2"}], elsewhere)["runs"][0]["tool"]["driver"]["rules"][0])
+
     def test_diff_mode_flags_only_the_lines_added_against_the_base(self):
         with tempfile.TemporaryDirectory() as d:
             git(d, "init", "-q", "-b", "main")
@@ -171,11 +225,21 @@ class TestLeaksCommand(unittest.TestCase):
             self.assertIn("a.md: email:", res.stdout)
         with tempfile.TemporaryDirectory() as d:
             write(d, "a.md", "write to you@example.com\n")
-            self.assertEqual(run_cli(d, "leaks").returncode, 0)
+            clean = run_cli(d, "leaks")
+            self.assertEqual(clean.returncode, 0)
+            self.assertEqual(clean.stdout, "no leaks found in .\n")       # it printed one empty line, which looked like a command that did not run
 
-    def test_interactive_entry_and_scan_surface_root_resolution(self):
-        from unittest import mock
+    def test_leaks_does_not_claim_a_clean_folder_for_a_path_that_is_no_folder(self):
+        """The first wording printed "no leaks found in <path>" for a typo in the path, where nothing had been checked."""
+        with tempfile.TemporaryDirectory() as d:
+            res = run_cli(d, "leaks", "no-such-folder")
+            self.assertEqual(res.returncode, 0)      # 0.9.1 exit code kept
+            self.assertNotIn("no leaks found", res.stdout)
+            self.assertIn("is not a folder", res.stderr)
 
+    def test_scan_surface_resolves_the_root_it_is_given(self):
+        """This test also drove ``_interactive_entry``, the menu and first-run wizard of a bare run at a terminal. A bare run now
+        prints the short help (``test_core_help``), so only the root resolution stays here (review of the first-five stage)."""
         from brevio.pipeline import core_cli
 
         with tempfile.TemporaryDirectory() as d:
@@ -183,52 +247,39 @@ class TestLeaksCommand(unittest.TestCase):
             found = core_cli.scan_surface({"styles/reveal.css": [(1, "[data-reveal] { opacity: 0; }")]}, root=d)
             self.assertTrue(any("[R1.2]" in f for f in found), found)
 
-            with mock.patch.object(core_cli, "_git", return_value=d + "\n"):
-                called = []
-                rc = core_cli._interactive_entry({"init": lambda args: called.append(args) or 0})
-                self.assertEqual(rc, 0)
-                self.assertEqual(called, [["--wizard"]])
-
 
 HAS_TRACK_D = os.path.isfile(os.path.join(ROOT, "brevio", "pipeline", "core_shield.py"))
 
 
 @unittest.skipUnless(HAS_TRACK_D, "Track D subcommands require 0.6 set")
 class TestTrackDSubcommands(unittest.TestCase):
-    def test_roast_subcommand_text_badge_and_json(self):
+    def test_roast_subcommand_prints_the_preview_counts_and_no_grade_badge_or_receipt(self):
+        """The earlier test pinned a 100/100 score, a letter grade, a verdict, a badge and a receipt link (2026-11-12).
+
+        Changed on purpose (D32, 2026-11-13): ``--badge`` of 0.9.1 is now accepted with a notice, so it no longer exits 2."""
         with tempfile.TemporaryDirectory() as d:
             write(d, "src/ok.ts", CLEAN_LINE)
-            # Text output
-            res = run_cli(d, "roast")
+            res = run_cli(d, "roast", "--no-upgrade-line")
             self.assertEqual(res.returncode, 0)
-            self.assertIn("brevio-core score: 100/100", res.stdout)
-            self.assertIn("Verdict: Zero agent-slop detected", res.stdout)
-            self.assertIn("README Badge:", res.stdout)
-            self.assertIn("Verified Receipt:", res.stdout)
+            self.assertIn("brevio-core score (preview): 0 finding(s) in 1 file(s)", res.stdout)
+            for word in ("Grade", "/100", "Verdict", "Badge", "Receipt", "https://"):
+                self.assertNotIn(word, res.stdout)
+            badge = run_cli(d, "roast", "--badge")
+            self.assertEqual(badge.returncode, 0)
+            self.assertIn("--badge no longer applies", badge.stderr)
+            data = json.loads(run_cli(d, "roast", "--json").stdout)
+            self.assertEqual((data["finding_count"], data["files"]), (0, 1))
+            self.assertFalse({"score", "grade", "roast", "badge_markdown", "receipt_url"} & set(data))
 
-            # Badge only
-            badge_res = run_cli(d, "roast", "--badge")
-            self.assertEqual(badge_res.returncode, 0)
-            self.assertIn("[![Agent Safety:", badge_res.stdout)
-
-            # JSON output
-            json_res = run_cli(d, "roast", "--json")
-            self.assertEqual(json_res.returncode, 0)
-            data = json.loads(json_res.stdout)
-            self.assertEqual(data["score"], 100)
-            self.assertEqual(data["grade"], "A+")
-            self.assertIn("Zero agent-slop", data["roast"])
-            self.assertIn("badge_markdown", data)
-            self.assertIn("receipt_url", data)
-
-    def test_roast_subcommand_with_finding_shows_engineering_roast(self):
+    def test_roast_subcommand_with_a_finding_counts_it_by_rule_and_says_what_to_run(self):
         with tempfile.TemporaryDirectory() as d:
             write(d, "src/bad.ts", AWS_EXAMPLE_LINE)
             res = run_cli(d, "roast")
             self.assertEqual(res.returncode, 0)
-            self.assertIn("Engineering Roast:", res.stdout)
-            self.assertIn("R13.1", res.stdout)
-            self.assertIn("AI wrote code violating", res.stdout)
+            self.assertIn("[R13.1] 1 finding(s)", res.stdout)
+            self.assertIn("Next: `brevio-core explain R13.1`", res.stdout)
+            self.assertNotIn("Engineering Roast", res.stdout)
+            self.assertNotIn("AI wrote code violating", res.stdout)
 
     def test_map_subcommand_text_and_json(self):
         with tempfile.TemporaryDirectory() as d:
@@ -256,18 +307,35 @@ class TestTrackDSubcommands(unittest.TestCase):
             self.assertTrue(data.get("ok"))
             self.assertEqual(data.get("status"), "clean")
 
+    def test_shield_without_a_comment_says_what_it_needs_and_still_exits_zero(self):
+        """``shield`` alone printed one empty line (D10, 2026-11-13). The exit code stays 0, as on 0.9.1."""
+        with tempfile.TemporaryDirectory() as d:
+            res = run_cli(d, "shield")
+            self.assertEqual(res.returncode, 0)
+            self.assertIn("needs --comment", res.stdout)
+            self.assertFalse(json.loads(run_cli(d, "shield", "--json").stdout)["matched"])      # the JSON form is unchanged
+
+    def test_the_help_of_shield_and_heal_say_what_they_do(self):
+        with tempfile.TemporaryDirectory() as d:
+            full = " ".join(run_cli(d, "help", "--all").stdout.split())
+        self.assertNotIn("run brevio-core heal", full)
+        self.assertNotIn("Command Handler", full)
+        self.assertIn("maintainer's pull-request comment", full)
+        self.assertIn("what still needs a person", full)
+
     def test_shield_subcommand_explain_roast_and_fix(self):
         with tempfile.TemporaryDirectory() as d:
             # explain
             exp_res = run_cli(d, "shield", "--comment", "@brevio explain R13.1")
             self.assertEqual(exp_res.returncode, 0)
             self.assertIn("R13.1", exp_res.stdout)
-            self.assertIn("Zero secret logging", exp_res.stdout)
+            self.assertIn("No hardcoded secrets", exp_res.stdout)   # D15 (2026-11-13): the title now says what the scan checks
 
             # roast
             roast_res = run_cli(d, "shield", "--comment", "@brevio roast")
             self.assertEqual(roast_res.returncode, 0)
-            self.assertIn("Verdict:", roast_res.stdout)
+            self.assertIn("(preview)", roast_res.stdout)
+            self.assertNotIn("Verdict:", roast_res.stdout)
 
             # fix (JSON output)
             fix_res = run_cli(d, "shield", "--comment", "@brevio fix", "--json")

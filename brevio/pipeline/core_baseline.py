@@ -13,18 +13,31 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import posixpath
 import re
 from collections import Counter
 from collections.abc import Callable, Collection, Iterable
 from typing import Any, NamedTuple
 
 BASELINE_PATH = ".brevio/baseline.json"
+INIT_RECORD = ".brevio/init.json"     # what ``brevio-core init`` records; core_init.RECORD names the same file
 FORMAT_VERSION = 1
 FAIL_ON = ("new", "all", "none")
 SUPPRESSION_RULE = "suppression"
 SUPPRESSION_MESSAGE = "new suppression: needs a human review"
 CI_ONLY = " (an ignore comment counts in CI only, not here)"
-_ID = r"[A-Za-z]+\d+(?:\.\d+)*"
+# The test-custody rules `brevio-core check` runs without reading an ignore comment (R20.5 does read one). The hook's
+# note above was added to their findings, which promised a silence that no command gives (2026-11-12, review of the
+# precision stage).
+NO_IGNORE = frozenset({"R20.1", "R20.2", "R20.3", "R20.4"})
+# 0.9.1 printed an empty test as R6.1, and `ignore R6.1` silenced it. The comment is still read for R20.5 for one release
+# (0.10.0, D34); the warning below tells the author to rename it.
+ALIASES = {"R20.5": "R6.1"}
+RENAMED = "{old} is now {new}; the old ID is read for one release"
+SECRET_RULES = frozenset({"R13.1"})     # a baselined finding of these hides a secret that is still in the history (I7)
+NOTE_MAX = 10                           # unused ignore comments listed before "and N more"
+_ID = r"(?:guard:[\w.-]+|[A-Za-z]+\d+(?:\.\d+)*)"     # a rule ID, or ``guard:<id>`` for a learned guard (2026-11-12)
 _DIRECTIVE = re.compile(rf"brevio-core:\s*ignore\s+(?P<rules>{_ID}(?:[\s,]+{_ID})*)(?P<rest>.*)$")
 _CLOSER = re.compile(r"(?:\*/\s*\}?|--!?>|%\}|\}\})\s*$")     # the end of a /* */, <!-- -->, {/* */} or template comment
 
@@ -37,6 +50,11 @@ FieldsOf = Callable[[str], "dict[str, Any] | None"]
 class Directive(NamedTuple):
     rules: frozenset[str]
     reason: str             # empty: the comment does not count
+
+
+class Where(NamedTuple):
+    file: str       # the baseline file, as a path from the current folder
+    prefix: str     # the path of the current folder (a diff scan: of the git root) below the folder that holds the file
 
 
 class Triage(NamedTuple):
@@ -57,10 +75,13 @@ def directive(text: str) -> Directive | None:
 
 def ignore_reason(rule: str, *texts: str) -> str:
     """The reason the first ignore comment in ``texts`` that names ``rule`` gives; "" when none silences it."""
+    if rule.upper() in NO_IGNORE:
+        return ""       # `check` reads no comment for these, so a hook must not say the comment counts in CI
+    old = ALIASES.get(rule.upper(), "")
     for text in texts:
         d = directive(text)
-        if d and d.reason and rule.upper() in d.rules:
-            return d.reason
+        if d and d.reason and (rule.upper() in d.rules or old in d.rules):
+            return d.reason + (f" ({RENAMED.format(old=old, new=rule.upper())})" if rule.upper() not in d.rules else "")
     return ""
 
 
@@ -68,16 +89,53 @@ def line_hash(text: str) -> str:
     return hashlib.sha256(text.strip().encode("utf-8")).hexdigest()
 
 
-def key(fields: dict[str, Any], text_of: TextOf) -> Key:
-    return str(fields["path"]), str(fields["rule"]), line_hash(text_of(str(fields["path"]), int(fields["line"])))
+def key(fields: dict[str, Any], text_of: TextOf, prefix: str = "") -> Key:
+    """The baseline key of a finding; ``prefix`` is the path of the current folder below the folder of the baseline file."""
+    path = str(fields["path"])
+    return (posixpath.normpath(posixpath.join(prefix, path)) if prefix else path), str(fields["rule"]), line_hash(text_of(path, int(fields["line"])))
+
+
+def git_root(start: str = ".") -> str:
+    """The folder with a ``.git`` entry at or above ``start`` (a folder or a worktree's file); "" when there is none."""
+    here = os.path.abspath(start)
+    while not os.path.exists(os.path.join(here, ".git")):
+        parent = os.path.dirname(here)
+        if parent == here:
+            return ""
+        here = parent
+    return here
+
+
+def locate(cwd: str = ".", diff: bool = False) -> Where:
+    """Where the baseline of ``cwd`` is: the nearest ``.brevio/baseline.json`` from here up to the git root, else the file
+    at the git root (``baseline`` writes there), else in ``cwd`` as in 0.9.1. A baseline in ``cwd`` always comes first.
+
+    The keys of a file are relative to its folder, so ``prefix`` is the path from that folder to ``cwd``. A diff scan names
+    files from the git root, so its prefix is the path from that folder to the root (empty when the file is there)."""
+    here, root = os.path.abspath(cwd), git_root(cwd)
+    folder = here
+    if root:
+        walk = here
+        while not os.path.isfile(os.path.join(walk, BASELINE_PATH)) and walk != root:
+            walk = os.path.dirname(walk)
+        folder = walk if os.path.isfile(os.path.join(walk, BASELINE_PATH)) else root
+    target = root if diff and root else here
+    below = os.path.relpath(target, folder).replace(os.sep, "/")
+    return Where(os.path.relpath(os.path.join(folder, BASELINE_PATH)).replace(os.sep, "/"),
+                 "" if below == "." or below.startswith("..") else below)
 
 
 def triage(findings: Iterable[str], fields_of: FieldsOf, text_of: TextOf, baseline: Counter[Key] | None,
-           honour_ignores: bool = True, commented: Callable[[str], bool] = lambda _path: True) -> Triage:
+           honour_ignores: bool = True, commented: Callable[[str], bool] = lambda _path: True,
+           prefix: str = "", totals: Counter[Key] | None = None) -> Triage:
     """Split ``findings`` into shown, silenced and baselined ones (``baseline`` ``None``: every finding counts).
 
-    ``commented(path)`` says whether an ignore comment in that file is one (a code file) rather than text."""
+    ``commented(path)`` says whether an ignore comment in that file is one (a code file) rather than text. A diff scan
+    sees only the added lines, so ``totals`` (how often each key occurs in the whole files) says where the baseline has
+    been used up: a key found more often than the baseline holds it hides nothing, so a copy of a baselined line shows (D26)."""
     budget: Counter[Key] = Counter(baseline or {})
+    if totals is not None:
+        budget = Counter({k: n for k, n in budget.items() if totals[k] <= n})
     out = Triage([], [], [])
     for finding in findings:
         fields = fields_of(finding)
@@ -90,7 +148,7 @@ def triage(findings: Iterable[str], fields_of: FieldsOf, text_of: TextOf, baseli
         if reason and honour_ignores:
             out.silenced.append((finding, reason))
             continue
-        k = key(fields, text_of)
+        k = key(fields, text_of, prefix)
         if budget[k] > 0:
             budget[k] -= 1
             out.baselined.append(finding)
@@ -99,9 +157,9 @@ def triage(findings: Iterable[str], fields_of: FieldsOf, text_of: TextOf, baseli
     return out
 
 
-def counts(findings: Iterable[str], fields_of: FieldsOf, text_of: TextOf) -> Counter[Key]:
+def counts(findings: Iterable[str], fields_of: FieldsOf, text_of: TextOf, prefix: str = "") -> Counter[Key]:
     """How often each key occurs among ``findings``: what a baseline records for them."""
-    return Counter(key(f, text_of) for f in map(fields_of, findings) if f is not None)
+    return Counter(key(f, text_of, prefix) for f in map(fields_of, findings) if f is not None)
 
 
 def merge(old: Counter[Key], new: Counter[Key], replaced: Callable[[str], bool]) -> Counter[Key]:
@@ -166,9 +224,20 @@ def ignore_warnings(lines: Numbered, known: Collection[str]) -> list[str]:
     return out
 
 
-def stale_entries(entries: Counter[Key], known: Collection[str]) -> list[str]:
+def renamed_ignores(silenced: Iterable[tuple[str, str]], fields_of: FieldsOf) -> list[str]:
+    """A warning for each finding an ignore comment silenced by its old rule ID; a comment for a live rule of that ID is left alone."""
+    tails = tuple(f"({RENAMED.format(old=old, new=new)})" for new, old in ALIASES.items())
+    out = []
+    for finding, reason in silenced:
+        fields = fields_of(finding)
+        if fields and reason.endswith(tails):
+            out.append(f"{fields['path']}:{fields['line']}: the ignore comment names the old ID of {fields['rule']}; rename it ({reason[reason.rindex('(') + 1:-1]})")
+    return out
+
+
+def stale_entries(entries: Counter[Key], known: Collection[str], where: str = BASELINE_PATH) -> list[str]:
     """A warning for each baseline entry whose rule ID is not a rule any more."""
-    return [f"{BASELINE_PATH}: the entry for {p} names {r}, which is not a rule" for (p, r, _h) in sorted(entries) if r not in known]
+    return [f"{where}: the entry for {p} names {r}, which is not a rule" for (p, r, _h) in sorted(entries) if r not in known]
 
 
 def suppression(path: str, lno: int, detail: str = "") -> str:
@@ -181,12 +250,61 @@ def added_ignores(lines: Numbered) -> list[str]:
             for lno, text in numbered if (d := directive(text)) and d.reason]
 
 
-def added_entries(before: Counter[Key], after: Counter[Key], after_text: str) -> list[str]:
+def added_entries(before: Counter[Key], after: Counter[Key], after_text: str, where: str = BASELINE_PATH) -> list[str]:
     """A finding for each baseline entry ``after`` holds that ``before`` (the base's baseline) did not."""
     rows = after_text.splitlines()
     out = []
     for (path, rule, digest), n in sorted(after.items()):
         if n > before.get((path, rule, digest), 0):
             lno = next((i for i, row in enumerate(rows, 1) if digest in row), 1)
-            out.append(suppression(BASELINE_PATH, lno, f" ({rule} in {path})"))
+            out.append(suppression(where, lno, f" ({rule} in {path})"))
     return out
+
+
+def secret_notes(entries: Counter[Key]) -> list[str]:
+    """A line for each baselined finding of ``SECRET_RULES``: the baseline hides it, it does not remove the secret (I7)."""
+    return [f"{r} in {p} is in the baseline: a secret is in your history; rotate it, baselining only hides it"
+            for (p, r, _h) in sorted(entries) if r in SECRET_RULES]
+
+
+def prune(entries: Counter[Key], found: Counter[Key]) -> tuple[Counter[Key], list[str]]:
+    """``entries`` cut to what ``found`` still holds, and a line for each entry taken out (I47)."""
+    kept = Counter({k: min(n, found[k]) for k, n in entries.items() if found[k] > 0})
+    return kept, [f"{p}: {r}" + (f" (x{entries[(p, r, h)] - kept[(p, r, h)]})" if entries[(p, r, h)] - kept[(p, r, h)] > 1 else "")
+                  for (p, r, h) in sorted(entries) if kept[(p, r, h)] < entries[(p, r, h)]]
+
+
+def unused_ignores(lines: Numbered, silenced: Iterable[tuple[str, str]], fields_of: FieldsOf, scanned: Collection[str]) -> list[str]:
+    """A note for each ignore comment among ``lines`` (a whole scan) that silenced nothing: no finding of a rule it names, on
+    its line or the next. Only rules the scan runs count, so a comment for a ``check`` rule is never called unused."""
+    used = {(f["path"], f["rule"], f["line"]) for f in map(fields_of, (s for s, _r in silenced)) if f}
+    out = []
+    for path, numbered in sorted(lines.items()):
+        for lno, text in numbered:
+            d = directive(text)
+            mine = sorted(r for r in (d.rules if d and d.reason else ()) if r in scanned)
+            if mine and not any((path, r, n) in used for r in mine for n in (lno, lno + 1)):
+                out.append(f"the ignore comment at {path}:{lno} ({', '.join(mine)}) matches no finding any more")
+    return out[:NOTE_MAX] + ([f"and {len(out) - NOTE_MAX} more ignore comments that match no finding"] if len(out) > NOTE_MAX else [])
+
+
+def dead_entries(entries: Counter[Key], found: Counter[Key]) -> int:
+    """How many baseline entries (counted with their repeats) match no finding of ``found``."""
+    return sum(max(0, n - found[k]) for k, n in entries.items())
+
+
+def init_wrote(base_baseline: str, base_record: str, record: str, baseline: str) -> bool:
+    """True when ``baseline`` is the file ``brevio-core init`` wrote in the change being scanned.
+
+    The base holds neither a baseline nor an init record, the change adds the record, and the record lists the baseline
+    with the sha256 of the text it has now. Such a baseline is the adoption change's own, so its entries are not new
+    suppressions; an entry added later, or a baseline edited after init, no longer matches the hash and stays reported
+    (2026-11-13, the adoption pull request failed its own check)."""
+    if base_baseline.strip() or base_record.strip():
+        return False
+    try:
+        entries = json.loads(record).get("entries", [])
+    except (ValueError, AttributeError):
+        return False
+    wanted = {hashlib.sha256(text.encode("utf-8")).hexdigest() for text in (baseline, baseline.replace("\r\n", "\n"))}
+    return any(isinstance(e, dict) and e.get("path") == BASELINE_PATH and e.get("sha256") in wanted for e in entries)

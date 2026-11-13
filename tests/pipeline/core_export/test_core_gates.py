@@ -12,13 +12,13 @@ import tempfile
 import unittest
 import unittest.mock
 
-from brevio.pipeline import core_memory
+from brevio.pipeline import core_baseline, core_cli, core_memory
 from brevio.pipeline.gates import core_gates
 
 
 def git(cwd: str, *args: str) -> None:
     subprocess.run(
-        ["git", "-C", cwd, "-c", "user.name=t", "-c", "user.email=t@example.com", *args],
+        ["git", "-C", cwd, "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false", *args],
         check=True,
         capture_output=True,
         timeout=30,
@@ -118,13 +118,13 @@ class TestCoreGates(unittest.TestCase):
             write_file(d, "tests/test_sample.py", weakened_test)
             findings = core_gates.check_test_custody(root=d, base="HEAD")
             self.assertEqual(len(findings), 1)
-            self.assertIn("[R6.5] Existing test assertions were removed or weakened", findings[0])
+            self.assertIn("[R20.2] Existing test assertions were removed or weakened", findings[0])
 
             # Delete the test file -> deletion finding
             os.remove(os.path.join(d, "tests/test_sample.py"))
             findings = core_gates.check_test_custody(root=d, base="HEAD")
             self.assertEqual(len(findings), 1)
-            self.assertIn("[R6.5] Existing test file was deleted against HEAD", findings[0])
+            self.assertIn("[R20.1] Existing test file was deleted against HEAD", findings[0])
 
     def test_check_ast_complexity(self):
         with tempfile.TemporaryDirectory() as d:
@@ -223,15 +223,15 @@ class TestCoreGates(unittest.TestCase):
             ],
         }
         findings = core_gates.check_test_tampering(dirty)
-        self.assertTrue(any("test_py.py:1: [R6.5] Test skip or focus marker added" in f for f in findings))
-        self.assertTrue(any("test_py.py:3: [R6.5] Tautological test assertion" in f for f in findings))
-        self.assertTrue(any("test_py.py:5: [R6.5] Test skip or focus marker added" in f for f in findings))
-        self.assertTrue(any("test_py.py:7: [R6.5] Tautological test assertion" in f for f in findings))
-        self.assertTrue(any("app.test.ts:1: [R6.5] Test skip or focus marker added" in f for f in findings))
-        self.assertTrue(any("app.test.ts:2: [R6.5] Test skip or focus marker added" in f for f in findings))
-        self.assertTrue(any("app.test.ts:3: [R6.5] Tautological test assertion" in f for f in findings))
-        self.assertTrue(any("app.test.ts:5: [R6.5] Test skip or focus marker added" in f for f in findings))
-        self.assertTrue(any("app.test.ts:5: [R6.5] Tautological test assertion" in f for f in findings))
+        self.assertTrue(any("test_py.py:1: [R20.3] Test skip or focus marker added" in f for f in findings))
+        self.assertTrue(any("test_py.py:3: [R20.4] Tautological test assertion" in f for f in findings))
+        self.assertTrue(any("test_py.py:5: [R20.3] Test skip or focus marker added" in f for f in findings))
+        self.assertTrue(any("test_py.py:7: [R20.4] Tautological test assertion" in f for f in findings))
+        self.assertTrue(any("app.test.ts:1: [R20.3] Test skip or focus marker added" in f for f in findings))
+        self.assertTrue(any("app.test.ts:2: [R20.3] Test skip or focus marker added" in f for f in findings))
+        self.assertTrue(any("app.test.ts:3: [R20.4] Tautological test assertion" in f for f in findings))
+        self.assertTrue(any("app.test.ts:5: [R20.3] Test skip or focus marker added" in f for f in findings))
+        self.assertTrue(any("app.test.ts:5: [R20.4] Tautological test assertion" in f for f in findings))
         self.assertFalse(any("src/app.py" in f for f in findings))
         self.assertFalse(any("test_py.py:4" in f for f in findings))
         self.assertFalse(any("app.test.ts:6" in f for f in findings))
@@ -338,8 +338,8 @@ class TestCoreGates(unittest.TestCase):
             # R9.4 and R4.6 wired into rules
             self.assertTrue(any("[R9.4]" in f for f in result["checks"]["rules"]))
             self.assertTrue(any("[R4.6]" in f for f in result["checks"]["rules"]))
-            # R6.5 tampering wired into test_custody
-            self.assertTrue(any("[R6.5] Tautological test assertion" in f for f in result["checks"]["test_custody"]))
+            # R20.4 tampering wired into test_custody
+            self.assertTrue(any("[R20.4] Tautological test assertion" in f for f in result["checks"]["test_custody"]))
 
     def test_check_agent_files(self):
         with tempfile.TemporaryDirectory() as d:
@@ -405,6 +405,51 @@ class TestCoreGates(unittest.TestCase):
             self.assertFalse(res["passed"])
             self.assertTrue(any("[R2.8]" in f for f in res["findings"]))
             self.assertTrue(any("[R16.3]" in f for f in res["findings"]))
+
+
+class TestCheckUsesTheBaseOfScanDiff(unittest.TestCase):
+    """``check`` without ``--base`` compares with the base ``scan --diff`` uses, and the receipt names it (I10, 2026-11-13)."""
+
+    def committed_secret_on_a_branch(self, d: str) -> None:
+        git(d, "init", "-q", "-b", "main")
+        write_file(d, "src/a.ts", "export const a = 1;\n")
+        git(d, "add", "-A")
+        git(d, "commit", "-qm", "base")
+        git(d, "checkout", "-q", "-b", "feature")
+        write_file(d, "src/b.ts", "const apiKey = '" + "AKIA" + "IOSFODNN7EXAMPLE" + "';\n")
+        git(d, "add", "-A")
+        git(d, "commit", "-qm", "feature")
+
+    def run_main(self, d: str, *args: str) -> subprocess.CompletedProcess:
+        top = os.path.abspath(os.path.join(os.path.dirname(core_gates.__file__), "..", "..", ".."))
+        code = f"import sys; sys.path.insert(0, {top!r}); from brevio.pipeline import core_cli; raise SystemExit(core_cli.main(sys.argv[1:]))"
+        return subprocess.run([sys.executable, "-I", "-c", code, "check", *args], cwd=d, capture_output=True, encoding="utf-8", timeout=60)
+
+    def test_a_committed_finding_on_a_branch_fails_check_without_a_base_and_the_receipt_says_against_what(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.committed_secret_on_a_branch(d)
+            res = self.run_main(d)
+            self.assertEqual(res.returncode, 1, res.stdout)
+            self.assertIn("Base: main", res.stdout)
+            self.assertIn("[R13.1]", res.stdout)
+            self.assertEqual(json.loads(self.run_main(d, "--json").stdout)["base"], "main")
+            self.assertIn("**Base**: main", self.run_main(d, "--format", "markdown").stdout)
+
+    def test_a_named_base_still_wins_so_check_base_head_keeps_its_old_meaning(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.committed_secret_on_a_branch(d)
+            res = self.run_main(d, "--base", "HEAD")
+            self.assertEqual(res.returncode, 0, res.stdout)
+            self.assertIn("Base: HEAD", res.stdout)
+
+    def test_a_named_base_the_checkout_lacks_is_said_on_stderr_and_the_receipt_names_the_base_used(self):
+        """Review of I10 (2026-11-13): ``check --base nope`` fell back to ``main`` without a word."""
+        with tempfile.TemporaryDirectory() as d:
+            self.committed_secret_on_a_branch(d)
+            res = self.run_main(d, "--base", "nope")
+            self.assertIn("base 'nope' is not in this checkout; compared with main", res.stderr)
+            self.assertIn("Base: main", res.stdout)
+            self.assertEqual(self.run_main(d, "--base", "HEAD").stderr, "")
 
 
 class TestCoreMemory(unittest.TestCase):
@@ -527,7 +572,7 @@ class TestCoreMemory(unittest.TestCase):
             git(d, "mv", "tests/test_billing.py", "tests/billing_helper.py")
             findings = core_gates.check_test_custody(root=d, base="HEAD")
             self.assertEqual(len(findings), 1)
-            self.assertIn("[R6.5]", findings[0])
+            self.assertIn("[R20.1]", findings[0])
 
     def test_pre_pr_flight_gate(self):
         try:
@@ -580,9 +625,9 @@ class TestCoreMemory(unittest.TestCase):
         }
         findings = core_gates.check_test_tampering(lines)
         self.assertEqual(len(findings), 3)
-        self.assertIn("tests/test_a.py:2: [R6.5] Tautological test assertion", findings[0])
-        self.assertIn("tests/test_b.test.ts:2: [R6.5] Tautological test assertion", findings[1])
-        self.assertIn("tests/test_b.test.ts:3: [R6.5] Tautological test assertion", findings[2])
+        self.assertIn("tests/test_a.py:2: [R20.4] Tautological test assertion", findings[0])
+        self.assertIn("tests/test_b.test.ts:2: [R20.4] Tautological test assertion", findings[1])
+        self.assertIn("tests/test_b.test.ts:3: [R20.4] Tautological test assertion", findings[2])
 
     def test_check_empty_test_blocks(self):
         with tempfile.TemporaryDirectory() as d:
@@ -606,7 +651,7 @@ class TestCoreMemory(unittest.TestCase):
             }
             findings = core_gates.check_empty_test_blocks(lines, root=d)
             self.assertEqual(len(findings), 3)
-            self.assertTrue(all("[R6.1]" in f for f in findings))
+            self.assertTrue(all("[R20.5]" in f for f in findings))
             self.assertTrue(any("test_empty" in f for f in findings))
             self.assertTrue(any("test_stub" in f for f in findings))
             self.assertTrue(any("test_js.test.ts:1" in f for f in findings))
@@ -698,6 +743,57 @@ class TestCoreMemory(unittest.TestCase):
                 self.assertTrue(any("[R5.1]" in f for f in res_conflict["findings"]))
             finally:
                 os.chdir(cwd)
+
+
+class TestCheckAppliesTheBaselineAsTheDiffScanDoes(unittest.TestCase):
+    """N2 (2026-11-13): on a branch ``scan --diff main`` reported a new copy of a baselined line (the baseline hides as many
+    copies as it recorded) and ``check`` with the same base did not. Both now triage through ``core_cli.triage`` with the
+    files read whole."""
+
+    OLD = "export const add = 1;\n// @ts-ignore\n"
+
+    def setUp(self) -> None:
+        self.cwd = os.getcwd()
+        self.tmp = tempfile.TemporaryDirectory()
+        self.d = self.tmp.name
+        self.addCleanup(self.tmp.cleanup)
+        self.addCleanup(os.chdir, self.cwd)
+        git(self.d, "init", "-q", "-b", "main")
+        write_file(self.d, "f1.ts", self.OLD)
+        os.chdir(self.d)                       # the triage reads the files it names from the current folder
+        found = core_cli.scan(core_cli.collect_files(["f1.ts"]))
+        self.assertEqual(len(found), 1, found)
+        write_file(self.d, ".brevio/baseline.json", core_baseline.render(
+            core_baseline.counts(found, core_cli.finding_fields, core_cli.line_reader())))
+        git(self.d, "add", "-A")
+        git(self.d, "commit", "-qm", "base")
+        git(self.d, "checkout", "-q", "-b", "feat")
+
+    def check(self) -> dict:
+        return core_gates.run_check(root=".", base="main")
+
+    def test_a_new_copy_of_a_baselined_line_is_reported_by_check_and_the_old_line_is_not(self) -> None:
+        self.assertTrue(self.check()["passed"])
+        write_file(self.d, "f1.ts", self.OLD + "// @ts-ignore\n")
+        res = self.check()
+        self.assertFalse(res["passed"])
+        self.assertEqual(len(res["checks"]["rules"]), 1, res["findings"])
+        self.assertIn("f1.ts:3: [R9.2]", res["findings"][0])
+
+    def test_check_keeps_a_moved_baselined_line_quiet(self) -> None:
+        write_file(self.d, "f1.ts", "// @ts-ignore\nexport const add = 1;\n")
+        res = self.check()
+        self.assertEqual(res["findings"], [])
+        self.assertTrue(res["passed"])
+
+
+class TestWeakenedTest(unittest.TestCase):
+    def test_a_test_text_with_fewer_assertions_than_before_is_a_finding_and_one_with_more_is_not(self) -> None:
+        old = "def test_a():\n    assert f() == 1\n    assert g() == 2\n"
+        weaker = core_gates.weakened_test("tests/test_a.py", old, "def test_a():\n    assert f() == 1\n", "HEAD")
+        self.assertIn("[R20.2]", weaker or "")
+        self.assertIn("(2 -> 1 assertions)", weaker or "")      # (2026-11-11) the text check that ``patch`` shares
+        self.assertIsNone(core_gates.weakened_test("tests/test_a.py", old, old + "    assert h() == 3\n", "HEAD"))
 
 
 if __name__ == "__main__":

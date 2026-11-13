@@ -6,6 +6,7 @@ or tenant name; those come from the harness at run time (the exporter). ``scan_t
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 
@@ -25,6 +26,11 @@ PRIVATE_ROOTS = ("brevio", "tools", "scripts", "bin", "state", "projects")
 # The release's map of each file to its harness source names harness paths on purpose, so it skips the path check
 # only; its URLs and emails are still checked (ROADMAP E29a, 2026-11-05).
 SOURCE_MAP = "MANIFEST.json"
+# The precision run quotes third-party code (a sample of what the scanner flagged) and names the repositories of its
+# corpus. That text is not ours: the quoted samples are skipped here, and the GitHub address of each corpus repository
+# is allowed (improvement plan 2a, 2026-11-12). The exporter's tenant-name scan still reads every file.
+QUOTED_DATA = ("docs/precision_sample.jsonl", "docs/precision_sample_before.jsonl")
+CORPUS_FILE = os.path.join("tools", "precision_corpus.json")      # a join, so a bare export holds no text naming a harness path
 _PACKAGE_STUB = "Part of the portable brevio rule engines."
 
 _SOURCE = re.compile(r"^Source\s*=\s*\"https:(?://)github\.com/([^/\"]+)/", re.M)
@@ -35,10 +41,22 @@ _DOTTED = re.compile(r"(?<![\w.])brevio((?:\.[A-Za-z_]\w*)+)")
 _SLASHED = re.compile(r"(?<![\w/.-])((?:" + "|".join(PRIVATE_ROOTS) + r")/[\w./-]*\w)")
 
 
-def allowed_urls(org: str | None = None) -> tuple[str, ...]:
+def allowed_urls(org: str | None = None, extra: tuple[str, ...] = ()) -> tuple[str, ...]:
     """The allow-list, plus ``github.com/<org>`` and the organisation's Pages site (lower case, as URLs are compared)
-    when an organisation is named. The rule pages live on that site, and the Action links each finding to its page."""
-    return ALLOWED_URLS + ((f"github.com/{org.lower()}", f"{org.lower()}.github.io") if org else ())
+    when an organisation is named, plus the ``extra`` paths. The rule pages live on that site, and the Action links
+    each finding to its page."""
+    return ALLOWED_URLS + ((f"github.com/{org.lower()}", f"{org.lower()}.github.io") if org else ()) + extra
+
+
+def corpus_urls(root: str) -> tuple[str, ...]:
+    """``github.com/<owner>/<repo>`` (lower case) for each repository the tree's precision corpus names, or ``()``."""
+    try:
+        with open(os.path.join(root, CORPUS_FILE), encoding="utf-8") as fh:
+            repos = json.load(fh)["repos"]
+        names = [r.get("name") for r in repos if isinstance(r, dict)]
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return ()
+    return tuple(f"github.com/{n.lower()}" for n in names if isinstance(n, str) and re.fullmatch(r"[\w.-]+/[\w.-]+", n))
 
 
 def tree_org(root: str) -> str | None:
@@ -51,10 +69,10 @@ def tree_org(root: str) -> str | None:
     return m.group(1) if m else None
 
 
-def _url_allowed(target: str, org: str | None = None) -> bool:
+def _url_allowed(target: str, org: str | None = None, extra: tuple[str, ...] = ()) -> bool:
     """``target`` (host and path, no scheme) is an allowed host (or one of its subdomains) or sits under an allowed path."""
     host = target.split("/")[0].split(":")[0]
-    for allowed in allowed_urls(org):
+    for allowed in allowed_urls(org, extra):
         if "/" in allowed:
             if target == allowed or target.startswith(allowed + "/"):
                 return True
@@ -63,10 +81,10 @@ def _url_allowed(target: str, org: str | None = None) -> bool:
     return False
 
 
-def bad_urls(text: str, org: str | None = None) -> list[str]:
+def bad_urls(text: str, org: str | None = None, extra: tuple[str, ...] = ()) -> list[str]:
     """URLs in ``text`` that are not on the allow-list (and not under ``github.com/<org>``, compared without case)."""
     return [m.group(0) for m in _URL.finditer(text)
-            if not _url_allowed(m.group(0).split("://", 1)[1].lower().rstrip("."), org)]
+            if not _url_allowed(m.group(0).split("://", 1)[1].lower().rstrip("."), org, extra)]
 
 
 def bad_emails(text: str) -> list[str]:
@@ -130,13 +148,14 @@ def scan_tree(root: str, org: str | None = None) -> list[str]:
     ``org`` defaults to the organisation the tree's own ``pyproject.toml`` names, so the public repository's CI needs no setting.
     """
     org = org or tree_org(root)
+    extra = corpus_urls(root)
     problems: list[str] = []
     for rel in tree_files(root):
-        text = read_text(os.path.join(root, rel))
+        text = None if rel in QUOTED_DATA else read_text(os.path.join(root, rel))
         if text is None:
             continue
         file_org = org or ("example-org" if rel.startswith("tests/") else None)
-        problems += [f"{rel}: url: {u}" for u in bad_urls(text, file_org)]
+        problems += [f"{rel}: url: {u}" for u in bad_urls(text, file_org, extra)]
         problems += [f"{rel}: email: {e}" for e in bad_emails(text)]
         if rel != SOURCE_MAP:
             problems += [f"{rel}: internal path: {p}" for p in bad_internal_paths(text, root)]

@@ -1,36 +1,38 @@
-"""PR-Checkable Zero-Token Code Rules Engine (R1–R19).
+"""PR-Checkable Zero-Token Code Rules Engine (R1–R20).
 
 Pure deterministic AST/regex rule catalog and pre-commit / PR diff scanner.
-Contains zero tenant-derived IP or markers (100% portable for brevio-gate).
+Holds no tenant-derived text or markers, so it runs unchanged in the exported package.
 """
 from __future__ import annotations
 
+import functools
 import math
 import os
 import re
 from collections import Counter
 
-# PR-Checkable Zero-Token Engineering Rules Catalog (R1–R19). The name keeps the count of the first catalogue: R2.8 was
+# PR-Checkable Zero-Token Engineering Rules Catalog (R1–R20). The name keeps the count of the first catalogue: R2.8 was
 # added on 2026-11-05, before the first release, so the eval and raw-HTML findings stop carrying R2.5 (the SSRF guard).
 PR_RULES_122: dict[str, str] = {
     # R1: UI / Mobile Performance (8 rules)
     "R1.1": "Mobile GPU budget: scope blur >=40px to md:/lg: desktop viewports",
-    "R1.2": "SSR visibility resilience: never leave [data-reveal] at opacity:0 without CSS animation fallback",
+    "R1.2": "SSR visibility resilience: leave no [data-reveal] at opacity:0 without a CSS animation fallback",
     "R1.3": "Third-party script deferral: load GTM/GA4 with lazyOnload after hydration",
-    "R1.4": "Zero-flash theme bootstrap: paired semantic tokens across light/dark modes",
-    "R1.5": "No dead controls: every interactive element wires a handler and loading/error feedback",
+    "R1.4": "Flash-free theme bootstrap: paired semantic tokens across light and dark modes",
+    "R1.5": "No dead controls: an interactive element wires a handler and loading and error feedback",
     "R1.6": "Accessible switch geometry: inline-flex items-center shrink-0 on toggle tracks",
     "R1.7": "LCP asset priority: priority/fetchpriority=high on hero LCP image, lazy below fold",
     "R1.8": "Async polling hygiene: clear intervals on unmount and stop polling on terminal states",
     # R2: Security & Tenancy (8 rules)
-    "R2.1": "Tenant context derivation: derive tenant context from verified session, never client payload",
-    "R2.2": "Tenant-scoped data access: every DB read/write filters by authenticated workspace scope",
+    "R2.1": "Tenant context derivation: derive tenant context from the verified session, not the client payload",
+    "R2.2": "Tenant-scoped data access: a DB read or write filters by the authenticated workspace scope",
     "R2.3": "Dual-key entity resolution: discriminate UUID/CUID vs domain/slug before database query",
     "R2.4": "Raw-body webhook verification: verify HMAC against raw request text before JSON parse",
     "R2.5": "Outbound SSRF & timeout guard: validate URL host and set AbortSignal.timeout()",
     "R2.6": "Constant-time secret comparison: use timingSafeEqual / compare_digest",
     "R2.7": "Secure cookie & CORS hygiene: HttpOnly, Secure, SameSite, no wildcard CORS with credentials",
-    "R2.8": "No unsafe code or HTML sinks: no eval or new Function on strings; dangerouslySetInnerHTML only with sanitised HTML",
+    "R2.8": "No unsafe code or HTML sinks: eval or exec on a non-literal, new Function, unsanitised dangerouslySetInnerHTML, "
+            "interpolated SQL strings and hidden control characters",
     # R3: Billing & FinOps (5 rules)
     "R3.1": "Idempotent webhook processing: deduplicate event_id with monotonic state transitions",
     "R3.2": "Monetary integer representation: store money as integer minor units (cents) + currency",
@@ -42,19 +44,20 @@ PR_RULES_122: dict[str, str] = {
     "R4.2": "Foreign-key & tenant composite indexing: index FKs and (tenant_id, created_at)",
     "R4.3": "N+1 query prevention: batch queries with IN / joins instead of per-row loop queries",
     "R4.4": "Ingestion FK pre-resolution: upsert or verify parent workspace before child rows",
-    "R4.5": "Bounded pagination: enforce hard LIMIT (<=100) on every list query",
+    "R4.5": "Bounded pagination: enforce a hard LIMIT (<=100) on list queries",
     # R5: Reliability & Fallbacks (5 rules)
-    "R5.1": "Deterministic graceful fallbacks: return explicit degraded status, never fabricated metrics",
+    "R5.1": "Deterministic graceful fallbacks: return an explicit degraded status, not fabricated metrics",
     "R5.2": "HTTP empty-body hygiene: 204 returns empty body; 200 JSON sets Content-Type",
     "R5.3": "Bounded retry with jitter: retry only transient 429/502/503/504 with backoff + jitter",
-    "R5.4": "No silent exception swallowing: log or surface errors; never use empty catch blocks",
-    "R5.5": "Process & lock safety: every subprocess.run carries timeout=; locks use try/finally",
+    "R5.4": "No silent exception swallowing: log or surface errors; empty catch blocks, bare except and except Exception: pass "
+            "are flagged",
+    "R5.5": "Process safety: no subprocess call with shell=True and no os.system call built from an f-string",
     # R6: Testing & Hermeticity (5 rules)
     "R6.1": "Real production import gate: tests must import and invoke real production code",
     "R6.2": "Mutation side-effect assertions: assert persisted state or DOM changes, not just HTTP 200",
-    "R6.3": "Deterministic condition waits: never use waitForTimeout/sleep in tests",
+    "R6.3": "No fixed-length waitForTimeout in tests: wait for a condition instead",
     "R6.4": "Hermetic test state isolation: isolate DB/state paths per test in setUp/addCleanup",
-    "R6.5": "Post-incident regression crystallization: every bug fix includes a failing-first test",
+    "R6.5": "Post-incident regression crystallization: a bug fix comes with a failing-first test",
     # R7: Architecture & Contracts (5 rules)
     "R7.1": "Contract-first monorepo changes: update shared Zod/OpenAPI schema before consumers",
     "R7.2": "Granular field validation: return field-level errors and preserve user form inputs",
@@ -63,21 +66,24 @@ PR_RULES_122: dict[str, str] = {
     "R7.5": "Universal contracts purity: contracts barrels must not import Node built-ins (node:fs, node:path)",
     # R8: Marketing & Attribution (3 rules)
     "R8.1": "Anti-cloaking & markdown parity: serve identical facts to crawlers and browsers",
-    "R8.2": "Honest telemetry attribution: label synthetic/demo data; never mix with live metrics",
+    "R8.2": "Honest telemetry attribution: label synthetic or demo data and keep it apart from live metrics",
     "R8.3": "Consent Mode v2 ordering: initialize default denied consent before analytics tags",
     # R9: TypeScript / Type Safety (3 rules)
     "R9.1": "No untyped escape hatches: no `as any` casts or `z.any()` schemas in production source",
-    "R9.2": "No silenced type errors: no @ts-ignore; every @ts-expect-error states its reason",
-    "R9.3": "Package-name imports: import workspace packages by name, never via ../../packages/ paths",
-    # R10: API & Network Robustness (8 rules)
-    "R10.1": "Explicit HTTP request timeouts: every fetch/axios call specifies timeout or AbortSignal",
+    "R9.2": "No silenced type errors: @ts-ignore is flagged; use @ts-expect-error and say why",
+    "R9.3": "Package-name imports: import workspace packages by name, not via ../../packages/ paths",
+    # R10: API & Network Robustness (9 rules)
+    "R10.1": "Explicit HTTP request timeouts: Python requests calls pass timeout=",
     "R10.2": "Idempotency key transmission: mutating external POST/PUT requests send Idempotency-Key",
     "R10.3": "Rate-limit header handling: parse 429 Retry-After and respect backoff deadlines",
     "R10.4": "Structured error envelope: error responses adhere to standard JSON error schema",
     "R10.5": "Response size bounding: clamp response body reads to avoid unbounded buffer allocation",
     "R10.6": "Content-Type negotiation: validate incoming request Accept / Content-Type headers",
     "R10.7": "No unauthenticated admin endpoints: route middleware protects management routes",
-    "R10.8": "Strict HTTP verb mapping: GET requests must be strictly read-only and side-effect free",
+    "R10.8": "Strict HTTP verb mapping: GET requests are read-only and free of side effects",
+    # R10.9 (2026-11-13): R10.1 names Python requests only; this one is the fetch and axios half, as its own ID so the
+    # stable rule keeps its meaning.
+    "R10.9": "Timeouts on fetch and axios: a call with no options argument sets no timeout and no AbortSignal",
     # R11: State Management & Concurrency (8 rules)
     "R11.1": "Atomic read-modify-write: concurrent mutations use compare-and-swap or row locks",
     "R11.2": "No dangling unawaited promises: promise chains either return or await explicitly",
@@ -97,7 +103,7 @@ PR_RULES_122: dict[str, str] = {
     "R12.7": "Temp file deterministic deletion: scratch files in /tmp register unlink in finalizer",
     "R12.8": "No unbounded collection growth: caches and registries specify TTL or LRU eviction",
     # R13: Observability & Logging Hygiene (8 rules)
-    "R13.1": "Zero secret logging: redact passwords, tokens, API keys, and authorization headers",
+    "R13.1": "No hardcoded secrets: credentials stay out of source code and out of browser bundles",
     "R13.2": "Structured JSON logging: application logs emit valid JSON key-value pairs with timestamps",
     "R13.3": "Trace context propagation: distributed calls forward traceparent / correlation IDs",
     "R13.4": "Metric label cardinality bounding: avoid dynamic user IDs or timestamps in metric labels",
@@ -110,7 +116,7 @@ PR_RULES_122: dict[str, str] = {
     "R14.2": "Password hash modern algorithms: use Argon2id or bcrypt with appropriate work factor",
     "R14.3": "Token expiration bounding: short-lived access tokens paired with rotating refresh tokens",
     "R14.4": "CSRF token validation: state-changing forms and endpoints validate anti-CSRF token",
-    "R14.5": "No credentials in URLs: tokens, API keys, and passwords never passed in query strings",
+    "R14.5": "No credentials in URLs: pass tokens, API keys and passwords outside query strings",
     "R14.6": "Strict redirect URL allowlist: OAuth / login return URLs validated against domain allowlist",
     "R14.7": "Brute-force throttle: login and reset-password routes rate-limited by IP and username",
     "R14.8": "Role-based access control: enforce authorization check at controller/handler boundary",
@@ -124,8 +130,8 @@ PR_RULES_122: dict[str, str] = {
     "R15.7": "Skeleton loader transition: loading states use layout-preserving skeletons to avoid CLS",
     "R15.8": "Recoverable 404 navigation: not-found pages provide search and home navigation links",
     # R16: Supply Chain & Dependency Hygiene (8 rules)
-    "R16.1": "Lockfile integrity enforcement: CI installs strictly via frozen lockfiles (pnpm --frozen)",
-    "R16.2": "No wildcard dependency versions: package.json avoids '*' or unbounded range dependencies",
+    "R16.1": "Lockfile integrity enforcement: CI installs from frozen lockfiles (pnpm --frozen)",
+    "R16.2": "No wildcard dependency versions: package.json does not use '*' or 'latest'",
     "R16.3": "Scoped internal packages: monorepo internal packages use scoped organization prefixes",
     "R16.4": "No install script execution: untrusted packages ignore postinstall lifecycle scripts",
     "R16.5": "Production bundle minimization: devDependencies not imported in production runtime code",
@@ -137,16 +143,17 @@ PR_RULES_122: dict[str, str] = {
     "R17.2": "No server-only code in client: 'server-only' imports barred from client-marked components",
     "R17.3": "Metadata API compliance: route pages export static or generateMetadata for SEO",
     "R17.4": "Next/Image usage: production UI renders next/image for optimized srcset and layout stability",
-    "R17.5": "Next/Font optimization: load Google/local fonts via next/font with zero layout shift",
+    "R17.5": "Next/Font optimization: load Google or local fonts via next/font to avoid layout shift",
     "R17.6": "Client boundary minimization: push 'use client' directives down to leaf interactive nodes",
     "R17.7": "Server action security: server actions validate session authentication before mutating",
     "R17.8": "Route handler return typing: route handlers return typed NextResponse with status",
     # R18: Accessibility (WCAG 2.1 AA) (8 rules)
-    "R18.1": "Meaningful image alternative text: informative images supply descriptive alt attribute",
-    "R18.2": "Form control labels: every input, select, and textarea element has associated label",
+    "R18.1": "Image alternative text: img elements carry an alt attribute",
+    "R18.2": "Form control labels: input, select and textarea elements have a label (not scanned); the scan checks "
+             "target=\"_blank\" links for rel=\"noopener noreferrer\"",
     "R18.3": "Keyboard navigation accessibility: interactive elements focusable via Tab and Enter/Space",
     "R18.4": "Contrast ratio minimum: text satisfies 4.5:1 minimum contrast ratio against background",
-    "R18.5": "No click handlers on non-interactive elements: divs/spans with onClick specify role='button'",
+    "R18.5": "No click handlers on non-interactive elements: a div with onClick and no role is flagged",
     "R18.6": "Aria attributes validity: aria-* attributes use valid names and permissible state values",
     "R18.7": "Visible focus rings: interactive elements retain visible focus outline for keyboard users",
     "R18.8": "Document language attribute: html root element specifies valid lang='en' attribute",
@@ -155,6 +162,13 @@ PR_RULES_122: dict[str, str] = {
     "R19.2": "Cyclomatic complexity bounding: functions maintain cyclomatic complexity <= 20",
     "R19.3": "No dead commented-out code: remove obsolete commented code blocks prior to PR merge",
     "R19.4": "Descriptive variable naming: avoid single-character variables outside trivial loops",
+    # R20: Test custody (5 rules). `brevio-core check` printed these findings under R6.5 (a different rule) and, for the
+    # empty test block, R6.1; they have IDs of their own since 2026-11-12 (improvement plan 3a).
+    "R20.1": "Existing test files kept: a test file on the base is not deleted or renamed to a file that is no test",
+    "R20.2": "Existing tests and assertions kept: a changed test file does not hold fewer tests or assertions than its base",
+    "R20.3": "No test skip or focus marker added: fix the failing test instead of silencing it",
+    "R20.4": "No tautological assertion added: assert real output or state",
+    "R20.5": "No empty test block: a test whose body is empty, `pass` or `...` tests nothing",
 }
 
 # Every rule has a status (ROADMAP E33, 2026-11-05). A stable rule fails a scan. A preview rule reports but never fails;
@@ -167,20 +181,50 @@ RULE_STATUS: dict[str, str] = {         # a rule not named here is stable
     # (a test checking that nothing happens in a given time) or test sources written as strings, and no small pattern
     # change tells those from a sleep that stands in for a condition. It reports, and never blocks, until narrowed.
     "R6.3": PREVIEW,
+    # New IDs for the test-custody findings (2026-11-12, improvement plan 3a). Nothing has measured them yet.
+    **dict.fromkeys(("R20.1", "R20.2", "R20.3", "R20.4", "R20.5"), PREVIEW),
+    # New in 0.10.0 (2026-11-13): a new rule ships as preview first, and nothing has measured this one.
+    "R10.9": PREVIEW,
 }
 # Why a rule is not stable, in one or two sentences; its rule page prints it after the status.
 STATUS_REASONS: dict[str, str] = {
     "R6.3": "In a precision run on open-source repositories most of its hits were deliberate waits (a test checking "
             "that nothing happens in a given time) or test code written as a string, so it reports but never fails a "
             "scan until it can tell those from a sleep that stands in for a condition.",
+    "R10.9": "New, and not measured on any code yet. It reads one line and flags only a call that has no options argument "
+             "at all, which cannot carry a signal or a timeout. It reports but never fails a scan until a precision run "
+             "judges it.",
+    # Not a scan rule: `brevio-core scan` does not run these, so "never fails a scan" would say too little. What `check`
+    # does with them is what it did before they had IDs (2026-11-12, improvement plan 3a).
+    **dict.fromkeys(("R20.1", "R20.2", "R20.3", "R20.4", "R20.5"),
+                    "New, and not measured on any code yet. A finding is a prompt for a reviewer, not proof of a "
+                    "problem: a change can drop or rewrite a test for a good reason. `brevio-core scan` does not run "
+                    "this rule, so no scan fails on it. `brevio-core check` reports it and exits 1 when it does."),
 }
 # A line for the Rules section of the next release notes about a rule, for a change the ID file cannot show: findings
 # that moved to another ID before the first release. Emptied when the release that carries them is out.
 RULE_NOTES: dict[str, str] = {
     "R2.8": "New ID for the eval, new Function and dangerouslySetInnerHTML findings, which builds before 0.6.0 reported "
             "as R2.5 (the SSRF and timeout guard, which brevio-core scan does not check); name R2.8 in an ignore "
-            "comment or brevio-core.toml for them.",
-    "R6.3": "Now preview: it reports a sleep in a test but never fails a scan (see its rule page).",
+            "comment or brevio-core.toml for them. Since 0.10.0 it also flags eval and exec on a non-literal in Python, "
+            "and eval in .mjs and .cjs files.",
+    "R5.4": "Since 0.10.0 a bare except that re-raises is not flagged, and an except Exception handler that only passes is.",
+    "R10.1": "The fetch and axios check is R10.9, a new preview rule; R10.1 stays the Python requests rule.",
+    "R10.9": "New, preview: a fetch or axios call with no options argument. R10.1 stays the Python requests rule.",
+    "R13.1": "A secret-named NEXT_PUBLIC_, VITE_ or REACT_APP_ variable now gets its own message; the ID and the finding "
+             "are the same.",
+    "R16.2": "A folder scan and a diff scan now read package.json, and a minified package.json is read too.",
+    "R18.2": "The scan checks target=\"_blank\" links without rel=\"noopener noreferrer\", as 0.9.1 did; the form-label "
+             "rule in the title has no scanner.",
+    "R20.1": "New ID for the findings about a test file that was deleted or renamed to a file that is no test. "
+             "Builds up to 0.9.1 printed them as R6.5, which names the regression-test rule.",
+    "R20.2": "New ID for the findings about a test file with fewer tests or assertions than its base. "
+             "Builds up to 0.9.1 printed them as R6.5.",
+    "R20.3": "New ID for the findings about an added skip or focus marker. Builds up to 0.9.1 printed them as R6.5.",
+    "R20.4": "New ID for the findings about an added assertion that is always true. "
+             "Builds up to 0.9.1 printed them as R6.5.",
+    "R20.5": "New ID for the findings about an empty test block. Builds up to 0.9.1 printed them as R6.1, "
+             "which names the rule about tests that import no code under test.",
 }
 
 
@@ -247,15 +291,34 @@ _AS_ANY_RX = re.compile(r"\bas\s+any(?![\w$])|\bz\.any\s*\(")
 _ANY_RX = _AS_ANY_RX
 _TS_IGNORE_RX = re.compile(r"@ts-ignore\b")
 _EMPTY_CATCH_RX = re.compile(r"\bcatch\s*(?:\([^)]*\))?\s*\{\s*\}")
-_BARE_EXCEPT_RX = re.compile(r"^\s*\+?\s*except\s*:")
+# ``except``, what it names (empty for a bare except) and the rest of the line, which holds a one-line handler's body.
+_EXCEPT_RX = re.compile(r"^(?P<indent>\s*)\+?\s*except\b(?P<what>[^:#]*):(?P<tail>.*)$")
+# A handler for ``Exception``, alone or in a tuple. ``BaseException`` is left out. ``except OSError: pass`` names what it
+# expects and is a common, deliberate cleanup, so it is not flagged (the standard library holds hundreds of them).
+_BROAD_EXCEPT_RX = re.compile(r"(?<![\w.])Exception\b")
+_PY_STRING_OR_COMMENT_RX = re.compile(r"""(?P<str>"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')|(?P<comment>#.*)""")
+# eval or exec called by name: not ``model.eval()``, ``ast.literal_eval(`` or a ``def eval(`` of one's own.
+_PY_EVAL_RX = re.compile(r"(?<!def )(?<![\w$.])(?:eval|exec)\s*\(")
+_PY_LITERAL_ARG_RX = re.compile(r'\s*[rRbBuU]?""\s*[,)]')       # on a masked line: a plain string, nothing joined to it
+_FETCH_CALL_RX = re.compile(r"(?<![\w$.])(?:fetch|axios\.(?P<verb>get|delete|head|options|post|put|patch))\s*\(")
+_SIGNAL_OR_TIMEOUT_RX = re.compile(r"\b(?:signal|timeout)\b", re.I)
 _SUBPROCESS_SHELL_RX = re.compile(
     r"\bsubprocess\.(?:run|Popen|call|check_call|check_output)\s*\([^)]*\bshell\s*=\s*True\b"
     r"|\bos\.system\s*\(\s*f[\"']"
 )
 _REQUESTS_CALL_RX = re.compile(r"\brequests\.(?:get|post|put|delete|patch|head)\s*\([^)]*\)")
 _TIMEOUT_KW_RX = re.compile(r"\btimeout\s*=")
-_WILDCARD_DEP_RX = re.compile(r'^\s*"(?P<key>[^"]+)"\s*:\s*"(?:\*|latest)"\s*,?\s*$')
+# A key whose whole value is ``*`` or ``latest``, one per line or several on a minified line.
+_WILDCARD_DEP_RX = re.compile(r'"(?P<key>[^"]+)"\s*:\s*"(?:\*|latest)"\s*(?=[,}]|$)')
 _WAIT_FOR_TIMEOUT_RX = re.compile(r"\bwaitForTimeout\s*\(\s*\d+")
+# A path is a test path when a folder or the file name says so by a whole word: test, tests, spec, specs, e2e or testing
+# at its start or end (tests/, __tests__/, a.test.ts, test_a.py, a_test.py, conftest.py). The substring "test" read
+# latest.py, contest_utils.py and attestation/ as tests and skipped the checks there (2026-11-13).
+_TEST_WORDS = frozenset({"test", "tests", "spec", "specs", "e2e", "testing", "unittest", "unittests", "pytest", "vitest",
+                         "testdata", "testutil", "testutils", "testhelper", "testhelpers"})
+_NAME_WORDS_RX = re.compile(r"[^A-Za-z0-9]+|(?<=[a-z0-9])(?=[A-Z])")
+# JavaScript and TypeScript sources, in both module systems.
+_SCRIPT_EXTS = (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts")
 # A line that is only a comment runs nothing: `<img>` or `as any` in prose is not code (E35 precision run, 2026-11-05).
 _COMMENT_LINE_RX = re.compile(r"^\s*(?://|/\*|\*)")
 # A div whose click handler only stops propagation is a wrapper, not a control; `role="button"` would be wrong (E35).
@@ -295,7 +358,12 @@ def _random_looking(value: str) -> bool:
 
 def _hardcoded_secret(line: str, before: str) -> bool:
     """R13.1 on one code line; ``before`` is the text of the few lines above it, read for a public key kind."""
-    if _CREDENTIAL_RX.search(line) or _CLIENT_BUNDLE_SECRET_ENV_RX.search(line):
+    return _hardcoded_literal(line, before) or bool(_CLIENT_BUNDLE_SECRET_ENV_RX.search(line))
+
+
+def _hardcoded_literal(line: str, before: str) -> bool:
+    """A credential format or a random-looking literal under a secret name on ``line``: a secret written into the code."""
+    if _CREDENTIAL_RX.search(line):
         return True
     for m in _SECRET_ASSIGN_RX.finditer(line):
         name, val = m["name"], m["val"]
@@ -318,6 +386,131 @@ def _unsafe_eval(rel_path: str, line: str, in_test: bool) -> bool:
     return True
 
 
+@functools.lru_cache(maxsize=4096)
+def is_test_path(rel_path: str) -> bool:
+    """``rel_path`` is a test file or lies in a test folder, judged by whole words (see ``_TEST_WORDS``)."""
+    parts = rel_path.replace("\\", "/").split("/")
+    stem = parts[-1].rpartition(".")[0] or parts[-1]
+    if stem.lower() == "conftest":
+        return True
+    for part in (*parts[:-1], *stem.split(".")):        # a.test.d.ts says test in a middle segment of its name
+        words = [w.lower() for w in _NAME_WORDS_RX.split(part) if w]
+        if words and (words[0] in _TEST_WORDS or words[-1] in _TEST_WORDS):
+            return True
+    return False
+
+
+def _python_unsafe_eval(rel_path: str, line: str) -> bool:
+    """True when ``line`` calls eval or exec on something other than a plain string literal (a Python source line)."""
+    masked = _PY_STRING_OR_COMMENT_RX.sub(lambda m: '""' if m.group("str") is not None else "", line)
+    if _TEST_ASSET_RX.search(rel_path):
+        return False
+    for m in _PY_EVAL_RX.finditer(masked):
+        rest = masked[m.end():]
+        if not rest.lstrip().startswith(")") and not _PY_LITERAL_ARG_RX.match(rest):
+            return True
+    return False
+
+
+def _call_args(masked: str, start: int) -> list[str] | None:
+    """The top-level arguments of the call whose ``(`` is just before ``start``; ``None`` when the call is not closed on
+    this line."""
+    depth, args, cur = 0, [], ""
+    for ch in masked[start:]:
+        if ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            if depth == 0:
+                return [a.strip() for a in (*args, cur) if a.strip()] if ch == ")" else None
+            depth -= 1
+        elif ch == "," and depth == 0:
+            args.append(cur)
+            cur = ""
+            continue
+        cur += ch
+    return None
+
+
+# ``function fetch(url) {`` or a method ``fetch(url) {`` defines a function; it does not call one.
+_FETCH_DEFINITION_RX = re.compile(r"\bfunction\s*\*?\s*fetch\s*\(|^\s*(?:(?:async|static|public|private|protected)\s+)*fetch\s*\([^)]*\)\s*(?::[^;{]*)?\{")
+
+
+def _fetch_without_options(line: str) -> bool:
+    """A ``fetch(url)``, ``axios.get(url)`` or ``axios.post(url, data)`` closed on ``line``: no options argument, so it
+    cannot carry a signal or a timeout. A line that names ``signal`` or ``timeout`` is left alone."""
+    masked = _mask_strings_and_trailing_comments(line)
+    if _SIGNAL_OR_TIMEOUT_RX.search(masked) or _FETCH_DEFINITION_RX.search(masked):
+        return False
+    for m in _FETCH_CALL_RX.finditer(masked):
+        args = _call_args(masked, m.end())
+        if args and not args[0].startswith("..."):
+            if len(args) <= (2 if m["verb"] in ("post", "put", "patch") else 1):
+                return True
+    return False
+
+
+def _statements(text: str) -> list[str]:
+    """The ``;``-separated statements on a line, without its comment."""
+    return [x.strip() for x in re.sub(r"\s*#.*$", "", text).split(";") if x.strip()]
+
+
+def _top_level_statements(numbered: list[tuple[int, str]], i: int, indent: int, tail: str) -> list[str]:
+    """The statements at the top level of the handler that starts on ``numbered[i]``: its one-line body, or the first
+    indented block below it. Reading stops at a gap in the line numbers (a diff) and at the first line that is not
+    indented deeper than the ``except``."""
+    if _statements(tail):
+        return _statements(tail)
+    out: list[str] = []
+    top, expected = 0, numbered[i][0]
+    for lno, text in numbered[i + 1:]:
+        if lno != expected + 1:
+            break
+        expected = lno
+        if not text.strip() or text.lstrip().startswith("#"):
+            continue
+        depth = len(text.expandtabs()) - len(text.expandtabs().lstrip())
+        if depth <= indent:
+            break
+        top = top or depth
+        if depth == top:
+            out += _statements(text)
+    return out
+
+
+def handler_body(numbered: list[tuple[int, str]], lno: int) -> list[str] | None:
+    """The top-level statements of the ``except`` handler that starts on line ``lno``, or ``None`` when that line is not
+    an ``except``. The rule and the fixer both read a handler through this, so they cannot disagree."""
+    for i, (n, line) in enumerate(numbered):
+        if n == lno:
+            m = _EXCEPT_RX.match(line)
+            return _top_level_statements(numbered, i, len(m["indent"].expandtabs()), m["tail"]) if m else None
+    return None
+
+
+def only_passes(body: list[str]) -> bool:
+    """Whether a handler body does nothing: it holds only ``pass`` or ``...``."""
+    return bool(body) and all(x in ("pass", "...") for x in body)
+
+
+def _handler_findings(rel_path: str, numbered: list[tuple[int, str]]) -> dict[int, str]:
+    """R5.4 for the ``except`` handlers of a Python file: a bare ``except:`` that does not re-raise, and an
+    ``except Exception`` handler that only passes. A bare ``raise`` at the top level of the handler means the error is
+    not swallowed."""
+    out: dict[int, str] = {}
+    for i, (lno, line) in enumerate(numbered):
+        m = _EXCEPT_RX.match(line)
+        if not m:
+            continue
+        body = _top_level_statements(numbered, i, len(m["indent"].expandtabs()), m["tail"])
+        if not m["what"].strip():
+            if "raise" not in body:
+                out[lno] = f"{rel_path}:{lno}: [R5.4] Bare `except:` detected; specify explicit exception tuple"
+        elif only_passes(body) and _BROAD_EXCEPT_RX.search(m["what"]):
+            out[lno] = (f"{rel_path}:{lno}: [R5.4] `except Exception` handler that only passes drops the error; log it, "
+                        "narrow it or re-raise it")
+    return out
+
+
 def _check_ui_patterns(rel_path: str, lno: int, line: str, findings: list[str]) -> None:
     """The rules for a code line of a UI component (``.tsx``, ``.jsx``) outside the tests."""
     if _DANGEROUS_HTML_RX.search(line) and not _SANITIZED_HTML_RX.search(line):
@@ -329,14 +522,14 @@ def _check_ui_patterns(rel_path: str, lno: int, line: str, findings: list[str]) 
 
 
 def _check_python_patterns(rel_path: str, lno: int, line: str, in_test: bool, findings: list[str]) -> None:
-    """The rules for a Python source line (``.py``)."""
-    if _BARE_EXCEPT_RX.search(line):
-        findings.append(f"{rel_path}:{lno}: [R5.4] Bare `except:` detected; specify explicit exception tuple")
+    """The rules for a Python source line (``.py``); the ``except`` handlers are read in ``_handler_findings``."""
     if not in_test and not line.lstrip().startswith("#"):
         if _SUBPROCESS_SHELL_RX.search(line):
             findings.append(f"{rel_path}:{lno}: [R5.5] Unsafe `shell=True` subprocess or interpolated `os.system` call")
         if _REQUESTS_CALL_RX.search(line) and not _TIMEOUT_KW_RX.search(line):
             findings.append(f"{rel_path}:{lno}: [R10.1] Outbound `requests` call without explicit `timeout=`")
+    if not line.lstrip().startswith("#") and _python_unsafe_eval(rel_path, line):
+        findings.append(f"{rel_path}:{lno}: [R2.8] Unsafe `eval` or `exec` on a non-literal detected")
 
 
 def _check_script_patterns(rel_path: str, lno: int, line: str, in_test: bool, findings: list[str]) -> None:
@@ -348,15 +541,21 @@ def _check_script_patterns(rel_path: str, lno: int, line: str, in_test: bool, fi
         findings.append(f"{rel_path}:{lno}: [R5.4] Empty catch block detected; handle or log the error")
     if _unsafe_eval(rel_path, line, in_test):
         findings.append(f"{rel_path}:{lno}: [R2.8] Unsafe `eval` or dynamic `Function` constructor detected")
+    if not in_test and _fetch_without_options(line):
+        findings.append(f"{rel_path}:{lno}: [R10.9] `fetch` or `axios` call without options sets no timeout or "
+                        "AbortSignal; pass `signal: AbortSignal.timeout(ms)` or `timeout`")
 
 
 def _check_security_patterns(rel_path: str, lno: int, line: str, code: bool, ext: str, before: str, findings: list[str]) -> None:
     """The cross-language security and manifest checks outside test files."""
-    if _hardcoded_secret(line, before):
+    if _hardcoded_literal(line, before):
         findings.append(f"{rel_path}:{lno}: [R13.1] Hardcoded secret pattern detected in added code")
+    elif m := _CLIENT_BUNDLE_SECRET_ENV_RX.search(line):
+        findings.append(f"{rel_path}:{lno}: [R13.1] Secret-named variable `{m.group(0)}` is sent to the browser; keep the "
+                        "secret server-side and expose only a public value")
     if _BIDI_TAG_RX.search(line):
         findings.append(f"{rel_path}:{lno}: [R2.8] Hidden directional or Unicode tag control character detected")
-    if code and ext in (".py", ".ts", ".tsx", ".js", ".jsx") and _UNSAFE_SQL_RX.search(line):
+    if code and ext in (".py", *_SCRIPT_EXTS) and _UNSAFE_SQL_RX.search(line):
         findings.append(f"{rel_path}:{lno}: [R2.8] Raw SQL string interpolation detected; use parameterized queries")
     if ext in (".tsx", ".jsx", ".html", ".vue", ".svelte") and code:
         if any(not _REL_NOOPENER_RX.search(m.group(0)) for m in _TARGET_BLANK_A_RX.finditer(line)):
@@ -366,16 +565,16 @@ def _check_security_patterns(rel_path: str, lno: int, line: str, code: bool, ext
 def _check_line_patterns(rel_path: str, lno: int, line: str, findings: list[str], before: str = "") -> None:
     """Helper to evaluate single-line AST and regex rules; ``before`` is the text of the few lines above ``line``."""
     ext = os.path.splitext(rel_path)[1].lower()
-    in_test = "test" in rel_path.lower()
+    in_test = is_test_path(rel_path)
     code = not _COMMENT_LINE_RX.match(line)     # the @ts-ignore rule still reads comments: the directive is one
-    is_js = ext in (".ts", ".tsx", ".js", ".jsx")
+    is_js = ext in _SCRIPT_EXTS
 
     if not in_test:
         _check_security_patterns(rel_path, lno, line, code, ext, before, findings)
     if ext == ".py":
         _check_python_patterns(rel_path, lno, line, in_test, findings)
     if os.path.basename(rel_path) == "package.json":
-        if (m := _WILDCARD_DEP_RX.match(line)) and m["key"] not in ("version", "private"):
+        if any(m["key"] not in ("version", "private") for m in _WILDCARD_DEP_RX.finditer(line)):
             findings.append(f"{rel_path}:{lno}: [R16.2] Wildcard or `latest` dependency version in `package.json`")
     if is_js and _TS_IGNORE_RX.search(line):
         findings.append(f"{rel_path}:{lno}: [R9.2] `@ts-ignore` used; use `@ts-expect-error` with explanatory reason")
@@ -437,8 +636,8 @@ def scan_lines(rel_path: str, numbered: list[tuple[int, str]]) -> list[str]:
         return raw_findings
 
     ext = os.path.splitext(rel_path)[1].lower()
-    in_test = "test" in rel_path.lower()
-    is_js = ext in (".ts", ".tsx", ".js", ".jsx")
+    in_test = is_test_path(rel_path)
+    is_js = ext in _SCRIPT_EXTS
 
     # R17.2: Bar 'server-only' imports from client components ('use client')
     if is_js and not in_test:
@@ -448,7 +647,11 @@ def scan_lines(rel_path: str, numbered: list[tuple[int, str]]) -> list[str]:
                 if re.search(r"['\"]server-only['\"]", text):
                     raw_findings.append(f"{rel_path}:{lno}: [R17.2] {PR_RULES_122['R17.2']}")
 
+    handlers = _handler_findings(rel_path, numbered) if ext == ".py" else {}
+
     for i, (lno, line) in enumerate(numbered):
+        if lno in handlers:
+            raw_findings.append(handlers[lno])
         before = "\n".join(t for n, t in numbered[max(0, i - _SECRET_CONTEXT):i] if n >= lno - _SECRET_CONTEXT)
         _check_line_patterns(rel_path, lno, line, raw_findings, before)
 

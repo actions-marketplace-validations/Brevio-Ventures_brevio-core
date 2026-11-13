@@ -17,7 +17,7 @@ from brevio.pipeline import core_cli, core_score
 from brevio.pipeline.code_rules import PR_RULES_122
 from brevio.pipeline.code_rules import docs as rule_docs
 
-HELP = "run the PR Maintainer Shield command handler on a PR comment"
+HELP = "answer a maintainer's pull-request comment (fix, explain, roast, triage, heal) from the command line"
 _SHELL_META_RX = re.compile(r"[;|`&]|\$\(")
 _CMD_RX = re.compile(r"@brevio\s+([A-Za-z0-9_-]+)(?:\s+([^\r\n]+))?", re.IGNORECASE)
 
@@ -133,7 +133,7 @@ def execute_shield_command(comment_body: str, root: str = ".") -> dict[str, Any]
                     return core_score.compute_scorecard(root=r)
                 core_score.score_repository = _score_repo
             res = core_score.score_repository(root)
-            reply = core_score.render_markdown(res, roast=True)
+            reply = core_score.render_markdown(res)
             return {
                 "matched": True,
                 "command": "roast",
@@ -146,7 +146,7 @@ def execute_shield_command(comment_body: str, root: str = ".") -> dict[str, Any]
                 "matched": True,
                 "command": "roast",
                 "ok": False,
-                "markdown_reply": f"### ⚠️ Brevio Maintainer Shield — Roast Error\n\nFailed to score repository: {exc}",
+                "markdown_reply": f"### ⚠️ Brevio Maintainer Shield — Count Error\n\nFailed to count the findings: {exc}",
                 "error": str(exc),
             }
 
@@ -229,7 +229,7 @@ def execute_shield_command(comment_body: str, root: str = ".") -> dict[str, Any]
             "Supported Maintainer Shield commands:\n"
             "- `@brevio fix`: apply deterministic AST fixes\n"
             "- `@brevio explain <rule_id>`: architectural rationale for a rule\n"
-            "- `@brevio roast`: generate repository roast scorecard\n"
+            "- `@brevio roast`: count the findings by rule (preview)\n"
             "- `@brevio triage <rule_id>`: record findings in baseline\n"
             "- `@brevio heal`: run autonomous repair loop"
         ),
@@ -244,6 +244,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--json", action="store_true", help="output result as JSON")
     args = ap.parse_args(sys.argv[1:] if argv is None else argv)
 
+    if not args.comment.strip() and not args.json:     # a blank comment matches no command; say what is needed (2026-11-13)
+        print('brevio-core shield: needs --comment, for example: brevio-core shield --comment "@brevio explain R9.2"')
+        return 0
     res = execute_shield_command(args.comment, root=args.root)
     if args.json:
         print(json.dumps(res, indent=2))

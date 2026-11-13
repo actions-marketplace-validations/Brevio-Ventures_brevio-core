@@ -69,7 +69,7 @@ _STD_ENV_PREFIXES = ("GITHUB_", "VERCEL_", "NEXT_RUNTIME", "PYTEST_", "npm_", "N
 
 def _git(cwd: str, *args: str) -> str:
     try:
-        r = subprocess.run([*GIT, "-C", cwd, *args], capture_output=True, text=True, timeout=30)
+        r = subprocess.run([*GIT, "-c", "core.quotepath=off", "-C", cwd, *args], capture_output=True, encoding="utf-8", errors="replace", timeout=30)  # a non-ASCII path stays readable (2026-11-12)
     except (OSError, subprocess.SubprocessError):
         return ""
     return r.stdout if r.returncode == 0 else ""
@@ -177,11 +177,11 @@ def check_test_tampering(lines: dict[str, list[tuple[int, str]]]) -> list[str]:
                 continue
             if _TEST_SKIP_FOCUS_RE.search(text):
                 findings.append(
-                    f"{rel}:{lno}: [R6.5] Test skip or focus marker added; fix the failing test instead of silencing it"
+                    f"{rel}:{lno}: [R20.3] Test skip or focus marker added; fix the failing test instead of silencing it"
                 )
             if _TAUTOLOGICAL_ASSERT_RE.search(text):
                 findings.append(
-                    f"{rel}:{lno}: [R6.5] Tautological test assertion; assert real output or state"
+                    f"{rel}:{lno}: [R20.4] Tautological test assertion; assert real output or state"
                 )
     return findings
 
@@ -195,7 +195,7 @@ def check_empty_test_blocks(
     lines: dict[str, list[tuple[int, str]]],
     root: str = ".",
 ) -> list[str]:
-    """Check for empty test function or block definitions (R6.1 / R6.6)."""
+    """Check for empty test function or block definitions (R20.5)."""
     findings: list[str] = []
     for rel, numbered in sorted(lines.items()):
         if not TEST_FILE_RE.search(rel):
@@ -230,7 +230,7 @@ def check_empty_test_blocks(
                                     added_lnos = {lno for lno, _ in numbered}
                                     if (func_lines & added_lnos) or not numbered:
                                         findings.append(
-                                            f"{rel}:{node.lineno}: [R6.1] Empty test block `{node.name}`; test must contain assertions"
+                                            f"{rel}:{node.lineno}: [R20.5] Empty test block `{node.name}`; test must contain assertions"
                                         )
                 except SyntaxError:
                     pass
@@ -239,11 +239,11 @@ def check_empty_test_blocks(
                 continue
             if _EMPTY_JS_TEST_RE.search(text):
                 findings.append(
-                    f"{rel}:{lno}: [R6.1] Empty test block; test must contain assertions"
+                    f"{rel}:{lno}: [R20.5] Empty test block; test must contain assertions"
                 )
             elif re.search(r"def\s+test_\w+\s*\([^)]*\)\s*:\s*(?:pass|\.\.\.)\s*$", text):
                 findings.append(
-                    f"{rel}:{lno}: [R6.1] Empty test block; test must contain assertions"
+                    f"{rel}:{lno}: [R20.5] Empty test block; test must contain assertions"
                 )
     seen: set[str] = set()
     deduped: list[str] = []
@@ -279,11 +279,16 @@ def _check_weakened_test(root: str, rel: str, old_content: str, resolved: str) -
             new_content = fh.read()
     except OSError:
         return None
+    return weakened_test(rel, old_content, new_content, resolved)
+
+
+def weakened_test(rel: str, old_content: str, new_content: str, resolved: str) -> str | None:
+    """A finding when ``new_content`` of a test file holds fewer tests or assertions than ``old_content`` (``resolved``)."""
     old_tests, old_asserts = _count_tests_and_asserts(old_content)
     new_tests, new_asserts = _count_tests_and_asserts(new_content)
     if new_tests < old_tests or new_asserts < old_asserts:
         return (
-            f"{rel}:1: [R6.5] Existing test assertions were removed or weakened against {resolved} "
+            f"{rel}:1: [R20.2] Existing test assertions were removed or weakened against {resolved} "
             f"({old_asserts} -> {new_asserts} assertions)"
         )
     return None
@@ -310,7 +315,7 @@ def check_test_custody(
                 continue
             if not TEST_FILE_RE.search(new_rel):
                 findings.append(
-                    f"{old_rel}:1: [R6.5] Existing test file was renamed to non-test `{new_rel}` against {resolved}; restore it or get human review"
+                    f"{old_rel}:1: [R20.1] Existing test file was renamed to non-test `{new_rel}` against {resolved}; restore it or get human review"
                 )
                 continue
             old_content = _git(root, "show", f"{resolved}:{old_rel}")
@@ -324,7 +329,7 @@ def check_test_custody(
             continue
         if status.startswith("D"):
             findings.append(
-                f"{rel}:1: [R6.5] Existing test file was deleted against {resolved}; restore it or get human review"
+                f"{rel}:1: [R20.1] Existing test file was deleted against {resolved}; restore it or get human review"
             )
         elif status.startswith("M"):
             old_content = _git(root, "show", f"{resolved}:{rel}")
@@ -466,12 +471,7 @@ def check_agent_files(root: str = ".", paths: list[str] | None = None) -> list[s
     if not os.path.isdir(root):
         return findings
     for dirpath, dirs, names in os.walk(root):
-        dirs[:] = sorted(
-            d for d in dirs
-            if d not in core_cli.SKIP_DIRS
-            and d not in core_cli.VENDORED_DIRS
-            and (not d.startswith(".") or d in (".cursor", ".agents", ".hermes"))
-        )
+        dirs[:] = [d for d in core_cli.prune_dirs(dirpath, dirs) if not d.startswith(".") or d in (".cursor", ".agents", ".hermes")]
         for n in sorted(names):
             full = os.path.join(dirpath, n)
             rel = os.path.relpath(full, root).replace(os.sep, "/")
@@ -544,7 +544,7 @@ def check_env_parity(
 def _collect_non_git_code_lines(root: str, paths: list[str] | None) -> dict[str, list[tuple[int, str]]]:
     out: dict[str, list[tuple[int, str]]] = {}
     for dirpath, dirs, names in os.walk(root):
-        dirs[:] = sorted(d for d in dirs if d not in core_cli.SKIP_DIRS and d not in core_cli.VENDORED_DIRS)
+        dirs[:] = core_cli.prune_dirs(dirpath, dirs)
         for n in sorted(names):
             full = os.path.join(dirpath, n)
             rel = os.path.relpath(full, root).replace(os.sep, "/")
@@ -730,10 +730,7 @@ def run_check(
         + agent_findings
         + env_findings
     )
-    try:
-        rule_findings, _, _ = core_cli.triage(rule_findings, root=root)
-    except TypeError:
-        rule_findings, _, _ = core_cli.triage(rule_findings)
+    rule_findings, _, _ = core_cli.triage(rule_findings, root=root, whole=sorted(lines))      # as ``scan --diff`` does (2026-11-13)
 
     conflict_findings = check_conflict_markers(lines)
     test_import_findings = check_test_imports(lines, root=root)
@@ -756,6 +753,7 @@ def run_check(
     return {
         "ok": passed,
         "passed": passed,
+        "base": _resolve_base(root, base),
         "findings": all_findings,
         "checks": {
             "rules": rule_findings,
@@ -789,12 +787,13 @@ def _render_markdown_receipt(result: dict[str, Any]) -> str:
     lines = [
         "### Pre-PR Flight Check Receipt",
         f"**Status**: {status_badge}",
+        f"**Base**: {result.get('base', 'HEAD')}",
         "",
         "| Check | Status | Count |",
         "| :--- | :--- | :--- |",
         f"| Conflict Markers (R5.1) | {'PASS' if not counts.get('conflict_markers') else 'FAIL'} | {counts.get('conflict_markers', 0)} |",
         f"| Test Imports (R6.1) | {'PASS' if not counts.get('test_imports') else 'FAIL'} | {counts.get('test_imports', 0)} |",
-        f"| Test Custody (R6.5) | {'PASS' if not counts.get('test_custody') else 'FAIL'} | {counts.get('test_custody', 0)} |",
+        f"| Test Custody (R20) | {'PASS' if not counts.get('test_custody') else 'FAIL'} | {counts.get('test_custody', 0)} |",
         f"| Orphan Files (R7.3) | {'PASS' if not counts.get('orphan_files') else 'FAIL'} | {counts.get('orphan_files', 0)} |",
         f"| AST Complexity (R19) | {'PASS' if not counts.get('complexity') else 'FAIL'} | {counts.get('complexity', 0)} |",
         f"| Rule Violations | {'PASS' if not counts.get('rules') else 'FAIL'} | {counts.get('rules', 0)} |",
@@ -814,10 +813,11 @@ def _render_text_receipt(result: dict[str, Any]) -> str:
     lines = [
         "=== Pre-PR Flight Check Receipt ===",
         f"Status: {status_str}",
+        f"Base: {result.get('base', 'HEAD')}",
         "Checks:",
         f"  [{'OK' if not counts.get('conflict_markers') else 'FAIL'}] R5.1 Conflict markers: {counts.get('conflict_markers', 0)} findings",
         f"  [{'OK' if not counts.get('test_imports') else 'FAIL'}] R6.1 Test imports: {counts.get('test_imports', 0)} findings",
-        f"  [{'OK' if not counts.get('test_custody') else 'FAIL'}] R6.5 Test custody: {counts.get('test_custody', 0)} findings",
+        f"  [{'OK' if not counts.get('test_custody') else 'FAIL'}] R20 Test custody: {counts.get('test_custody', 0)} findings",
         f"  [{'OK' if not counts.get('orphan_files') else 'FAIL'}] R7.3 Orphan files: {counts.get('orphan_files', 0)} findings",
         f"  [{'OK' if not counts.get('complexity') else 'FAIL'}] R19 Complexity: {counts.get('complexity', 0)} findings",
         f"  [{'OK' if not counts.get('rules') else 'FAIL'}] Rules scan: {counts.get('rules', 0)} findings",
@@ -840,15 +840,15 @@ def render_receipt(result: dict[str, Any], fmt: str = "text") -> str:
 def main(argv: list[str] | None = None, prog: str = "brevio-core check") -> int:
     argv = sys.argv[1:] if argv is None else argv
     parser = argparse.ArgumentParser(prog=prog, description=HELP)
-    parser.add_argument("--base", default="HEAD", help="git base ref to compare against (default: HEAD)")
+    parser.add_argument("--base", default="", help="git base ref to compare against (default: the base of scan --diff: origin/main, main or HEAD)")
     parser.add_argument("--json", action="store_true", help="output JSON receipt")
     parser.add_argument("--format", choices=["text", "markdown", "json"], default="text", help="receipt format")
     parser.add_argument("paths", nargs="*", help="optional paths to check")
     args = parser.parse_args(argv)
-
     fmt = "json" if args.json else args.format
+    if args.base and not _git(".", "rev-parse", "--verify", "-q", args.base).strip():     # a mistyped base is compared with the next one, and says so
+        print(f"brevio-core: warning: base '{args.base}' is not in this checkout; compared with {_resolve_base('.', args.base)}", file=sys.stderr)
     result = run_check(".", base=args.base, paths=args.paths or None)
-
     if fmt == "json":
         print(json.dumps(result, indent=2))
     else:

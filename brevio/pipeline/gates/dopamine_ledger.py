@@ -1,28 +1,25 @@
-"""Savings receipt: the local ledger behind `cli.py gain` (Master Growth Plan G13 / S7).
+"""The local ledger behind `cli.py gain` (Master Growth Plan G13 / S7).
 
-Counts the defects intercepted locally before they cost an LLM build/test retry loop. Interceptions
-are counts. Tokens or money saved are recorded only when the caller passes a measured value (for
+Counts the hits a learned guard recorded in this repository (``guard_scan`` writes them). A hit is a count. Tokens or money saved are recorded only when the caller passes a measured value (for
 example the real token cost of the retry the hook prevented); there is no per-interception estimate
-(owner decision, 2026-11-04). Computes the shareable SVG receipt URL.
+(owner decision, 2026-11-04). It builds no receipt link: the signed link of this module's first version used a key
+that sat in the source, so anyone could have made one (2026-11-12, improvement plan).
 """
 from __future__ import annotations
 
-import base64
 import datetime
-import hashlib
-import hmac
-import json
 import os
+import re
+import subprocess
 from typing import Any
 
-from brevio.pipeline.agent_host import config, jsonstore
+from brevio.pipeline.agent_host import config, gitsafe, jsonstore
 from brevio.pipeline.code_rules import PR_RULES_122
+from brevio.pipeline.code_rules.details import scanned_by
 from brevio.pipeline.gates import defect_compiler
 
 STATS_DIR = ".brevio"
 STATS_FILE = "stats.json"
-
-RECEIPT_SALT = "brevio_public_community_receipt_salt"
 
 
 def get_stats_path(cwd: str | None = None) -> str:
@@ -45,9 +42,46 @@ def load_stats(cwd: str | None = None) -> dict[str, Any]:
     return data
 
 
+def _keep_out_of_commits(cwd: str | None) -> None:
+    """Add the stats file to git's local exclude file (``.git/info/exclude``), as ``init --personal`` does: it is this
+    machine's count with timestamps, and an untracked file invites a commit by accident (2026-11-13, D52). Nothing happens
+    outside a git work tree, and nothing is written when git cannot say where the file is."""
+    root = cwd or config.WORKSPACE_DIR
+    try:
+        proc = subprocess.run([*gitsafe.GIT, "rev-parse", "--git-path", "info/exclude", "--show-prefix"], cwd=root,
+                              capture_output=True, encoding="utf-8", errors="replace", timeout=15)
+    except (OSError, subprocess.SubprocessError):
+        return
+    where = proc.stdout.splitlines()
+    if proc.returncode != 0 or len(where) < 2:
+        return
+    exclude = os.path.join(root, where[0])
+    # the exclude file reads ``[`` ``*`` ``?`` as patterns: a folder such as ``app/[id]`` is written with them escaped
+    entry = "/" + re.sub(r"([\\\[\]*?])", r"\\\1", f"{where[1]}{STATS_DIR}/{STATS_FILE}") + "\n"
+    try:
+        with open(exclude, encoding="utf-8", errors="replace") as fh:
+            held = fh.read()
+    except FileNotFoundError:
+        held = ""
+        os.makedirs(os.path.dirname(exclude), exist_ok=True)
+    except OSError:
+        return
+    if entry.strip() in held.splitlines():
+        return
+    try:
+        with open(exclude, "a", encoding="utf-8", newline="\n") as fh:
+            fh.write(("" if not held or held.endswith("\n") else "\n")
+                     + f"# brevio-core: a count kept on this machine, not for commits\n{entry}")
+    except OSError:
+        return
+
+
 def save_stats(data: dict[str, Any], cwd: str | None = None) -> None:
     path = get_stats_path(cwd)
+    first = not os.path.exists(path)
     jsonstore.write(path, data, indent=2, lock=False)
+    if first:
+        _keep_out_of_commits(cwd)
 
 
 def record_interception(
@@ -83,54 +117,21 @@ def record_interception(
     return event
 
 
-def generate_receipt_url(
-    interceptions: int,
-    tokens_saved: int | None,
-    active_guards: int,
-    aeo_score: int = 100,
-) -> str:
-    """Generate deterministic HMAC-signed shareable SVG receipt URL."""
-    payload = {
-        "i": interceptions,
-        "g": active_guards,
-        "aeo": aeo_score,
-        "ts": int(datetime.datetime.now(datetime.timezone.utc).timestamp()),
-    }
-    if tokens_saved:                    # only a measured figure goes on the receipt
-        payload["t"] = tokens_saved
-        payload["measured"] = True
-    raw = json.dumps(payload, sort_keys=True).encode("utf-8")
-    b64 = base64.urlsafe_b64encode(raw).decode("ascii")
-    sig = hmac.new(RECEIPT_SALT.encode("utf-8"), b64.encode("ascii"), hashlib.sha256).hexdigest()[:16]
-    return f"https://brevio.pro/api/receipt.svg?d={b64}&sig={sig}"
-
-
 def get_gain_summary(cwd: str | None = None) -> dict[str, Any]:
-    """Compute the savings receipt: counts always, savings only when measured."""
+    """The counts ``gain`` prints: what the ledger recorded, the guards on file, the rules the scan checks. Savings are
+    given only when a caller measured them. Nothing here is a score, and the counts of rules are the code's own."""
     stats = load_stats(cwd)
-    guards_data = defect_compiler.load_guards(cwd)
-    guards = guards_data.get("guards", {})
-
-    active_guards = sum(1 for g in guards.values() if g.get("status") in ("active", "trial"))
+    guards = defect_compiler.load_guards(cwd).get("guards", {})
+    statuses = [g.get("status") for g in guards.values() if isinstance(g, dict)]
     interceptions = int(stats.get("total_interceptions", 0))
     measured = int(stats.get("measured_events", 0)) > 0   # v1 files held estimates: they never count
-    tokens_saved = int(stats.get("tokens_saved", 0)) if measured else 0
-    cost_saved = float(stats.get("cost_saved_usd", 0.0)) if measured else 0.0
-
-    receipt_url = generate_receipt_url(
-        interceptions=interceptions,
-        tokens_saved=tokens_saved if measured else None,
-        active_guards=active_guards,
-        aeo_score=100,
-    )
-
     return {
         "total_interceptions": interceptions,
-        "active_learned_guards": active_guards,
-        "base_rules_enforced": len(PR_RULES_122),
+        "active_learned_guards": statuses.count("active"),
+        "trial_learned_guards": statuses.count("trial"),
+        "rules_scanned": len(scanned_by("code")),
+        "rules_documented": len(PR_RULES_122),
         "savings_measured": measured,
-        "tokens_saved": tokens_saved,
-        "cost_saved_usd": cost_saved,
-        "aeo_score": 100,
-        "receipt_url": receipt_url,
+        "tokens_saved": int(stats.get("tokens_saved", 0)) if measured else 0,
+        "cost_saved_usd": float(stats.get("cost_saved_usd", 0.0)) if measured else 0.0,
     }

@@ -1,14 +1,14 @@
 # Rules
 
-One page per rule: what it catches, why, a bad and a good example, how it is checked and how to silence it. There are 123 rules. `brevio-core scan` checks 13 of them. The harness's pre-flight checks 10 more, which `brevio-core scan` does not run; 22 more are slice cards; the rest are standing rules. Generated from the rule definitions; do not edit by hand.
+One page per rule: what it catches, why, a bad and a good example, how it is checked and how to silence it. There are 129 rules. `brevio-core scan` checks 14 of them and `brevio-core scan --surface` 9 more; 5 more are checked by `brevio-core check`; 23 more come with a one-line reminder from `brevio-core brief`; the rest are standing rules for authors and reviewers. Generated from the rule definitions; do not edit by hand.
 
 
 ## R1: UI and mobile performance
 
-- [R1.1](R1.1.md) Mobile GPU budget (harness pre-flight)
-- [R1.2](R1.2.md) SSR visibility resilience (harness pre-flight)
-- [R1.3](R1.3.md) Third-party script deferral (harness pre-flight)
-- [R1.4](R1.4.md) Zero-flash theme bootstrap
+- [R1.1](R1.1.md) Mobile GPU budget (brevio-core scan --surface)
+- [R1.2](R1.2.md) SSR visibility resilience (brevio-core scan --surface)
+- [R1.3](R1.3.md) Third-party script deferral (brevio-core scan --surface)
+- [R1.4](R1.4.md) Flash-free theme bootstrap
 - [R1.5](R1.5.md) No dead controls
 - [R1.6](R1.6.md) Accessible switch geometry
 - [R1.7](R1.7.md) LCP asset priority
@@ -17,9 +17,9 @@ One page per rule: what it catches, why, a bad and a good example, how it is che
 ## R2: Security and tenancy
 
 - [R2.1](R2.1.md) Tenant context derivation
-- [R2.2](R2.2.md) Tenant-scoped data access (harness pre-flight)
+- [R2.2](R2.2.md) Tenant-scoped data access
 - [R2.3](R2.3.md) Dual-key entity resolution
-- [R2.4](R2.4.md) Raw-body webhook verification (harness pre-flight)
+- [R2.4](R2.4.md) Raw-body webhook verification (brevio-core scan --surface)
 - [R2.5](R2.5.md) Outbound SSRF & timeout guard
 - [R2.6](R2.6.md) Constant-time secret comparison
 - [R2.7](R2.7.md) Secure cookie & CORS hygiene
@@ -28,7 +28,7 @@ One page per rule: what it catches, why, a bad and a good example, how it is che
 ## R3: Billing and money
 
 - [R3.1](R3.1.md) Idempotent webhook processing
-- [R3.2](R3.2.md) Monetary integer representation (harness pre-flight)
+- [R3.2](R3.2.md) Monetary integer representation (brevio-core scan --surface)
 - [R3.3](R3.3.md) Gateway ID discrimination
 - [R3.4](R3.4.md) Pre-execution quota enforcement
 - [R3.5](R3.5.md) Transactional outbox
@@ -47,13 +47,13 @@ One page per rule: what it catches, why, a bad and a good example, how it is che
 - [R5.2](R5.2.md) HTTP empty-body hygiene
 - [R5.3](R5.3.md) Bounded retry with jitter
 - [R5.4](R5.4.md) No silent exception swallowing (brevio-core scan)
-- [R5.5](R5.5.md) Process & lock safety (brevio-core scan)
+- [R5.5](R5.5.md) Process safety (brevio-core scan)
 
 ## R6: Testing and hermeticity
 
-- [R6.1](R6.1.md) Real production import gate (harness pre-flight)
-- [R6.2](R6.2.md) Mutation side-effect assertions (harness pre-flight)
-- [R6.3](R6.3.md) Deterministic condition waits (brevio-core scan) (preview)
+- [R6.1](R6.1.md) Real production import gate (brevio-core scan --surface)
+- [R6.2](R6.2.md) Mutation side-effect assertions (brevio-core scan --surface)
+- [R6.3](R6.3.md) No fixed-length waitForTimeout in tests (brevio-core scan) (preview)
 - [R6.4](R6.4.md) Hermetic test state isolation
 - [R6.5](R6.5.md) Post-incident regression crystallization
 
@@ -63,7 +63,7 @@ One page per rule: what it catches, why, a bad and a good example, how it is che
 - [R7.2](R7.2.md) Granular field validation
 - [R7.3](R7.3.md) Single canonical route per path
 - [R7.4](R7.4.md) Acyclic module layering
-- [R7.5](R7.5.md) Universal contracts purity (harness pre-flight)
+- [R7.5](R7.5.md) Universal contracts purity (brevio-core scan --surface)
 
 ## R8: Marketing and attribution
 
@@ -75,7 +75,7 @@ One page per rule: what it catches, why, a bad and a good example, how it is che
 
 - [R9.1](R9.1.md) No untyped escape hatches (brevio-core scan)
 - [R9.2](R9.2.md) No silenced type errors (brevio-core scan)
-- [R9.3](R9.3.md) Package-name imports (harness pre-flight)
+- [R9.3](R9.3.md) Package-name imports (brevio-core scan --surface)
 
 ## R10: API and network robustness
 
@@ -87,6 +87,7 @@ One page per rule: what it catches, why, a bad and a good example, how it is che
 - [R10.6](R10.6.md) Content-Type negotiation
 - [R10.7](R10.7.md) No unauthenticated admin endpoints
 - [R10.8](R10.8.md) Strict HTTP verb mapping
+- [R10.9](R10.9.md) Timeouts on fetch and axios (brevio-core scan) (preview)
 
 ## R11: State and concurrency
 
@@ -112,7 +113,7 @@ One page per rule: what it catches, why, a bad and a good example, how it is che
 
 ## R13: Observability and logging
 
-- [R13.1](R13.1.md) Zero secret logging (brevio-core scan)
+- [R13.1](R13.1.md) No hardcoded secrets (brevio-core scan)
 - [R13.2](R13.2.md) Structured JSON logging
 - [R13.3](R13.3.md) Trace context propagation
 - [R13.4](R13.4.md) Metric label cardinality bounding
@@ -167,7 +168,7 @@ One page per rule: what it catches, why, a bad and a good example, how it is che
 
 ## R18: Accessibility (WCAG 2.1 AA)
 
-- [R18.1](R18.1.md) Meaningful image alternative text (brevio-core scan)
+- [R18.1](R18.1.md) Image alternative text (brevio-core scan)
 - [R18.2](R18.2.md) Form control labels (brevio-core scan)
 - [R18.3](R18.3.md) Keyboard navigation accessibility
 - [R18.4](R18.4.md) Contrast ratio minimum
@@ -182,3 +183,11 @@ One page per rule: what it catches, why, a bad and a good example, how it is che
 - [R19.2](R19.2.md) Cyclomatic complexity bounding
 - [R19.3](R19.3.md) No dead commented-out code
 - [R19.4](R19.4.md) Descriptive variable naming
+
+## R20: Test custody
+
+- [R20.1](R20.1.md) Existing test files kept (brevio-core check) (preview)
+- [R20.2](R20.2.md) Existing tests and assertions kept (brevio-core check) (preview)
+- [R20.3](R20.3.md) No test skip or focus marker added (brevio-core check) (preview)
+- [R20.4](R20.4.md) No tautological assertion added (brevio-core check) (preview)
+- [R20.5](R20.5.md) No empty test block (brevio-core check) (preview)

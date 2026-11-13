@@ -1,0 +1,16 @@
+{
+  "name": "ts-react-oss",
+  "about": "Open-source TypeScript and React repositories the precision run scans (tools/precision_run.py). Each is pinned to a full commit SHA; the licence is checked against the repository's own licence file at that commit.",
+  "repos": [
+    {"name": "vercel/swr", "url": "https://github.com/vercel/swr", "sha": "8148ef012fd5b317d1e8ec2da4b2ca0673f63c0f", "licence": "MIT"},
+    {"name": "shadcn-ui/ui", "url": "https://github.com/shadcn-ui/ui", "sha": "8a3536678a528cc012b9e62484290e79d0be410f", "licence": "MIT"},
+    {"name": "TanStack/query", "url": "https://github.com/TanStack/query", "sha": "284abac02d34f88ceb119c2af3fd3cf400b64a7a", "licence": "MIT"},
+    {"name": "TanStack/table", "url": "https://github.com/TanStack/table", "sha": "c14e0221b1e656c7bb35e7b3d4cdf188719a3599", "licence": "MIT"},
+    {"name": "trpc/trpc", "url": "https://github.com/trpc/trpc", "sha": "6ea3d9873854564198c077df20a1db2f01bc2ae3", "licence": "MIT"},
+    {"name": "facebook/lexical", "url": "https://github.com/facebook/lexical", "sha": "dfe058a840e35e1e796bc69ad2335703b004502e", "licence": "MIT"},
+    {"name": "microsoft/playwright", "url": "https://github.com/microsoft/playwright", "sha": "5c55bfa2c7a65962eebdaa60c6a51cbd230305f0", "licence": "Apache-2.0"},
+    {"name": "excalidraw/excalidraw", "url": "https://github.com/excalidraw/excalidraw", "sha": "7ded689cad49331167e29fd88b38f38d3736d576", "licence": "MIT"},
+    {"name": "remix-run/react-router", "url": "https://github.com/remix-run/react-router", "sha": "db80dda076ec9cdcefff480079252fe0c977710e", "licence": "MIT"},
+    {"name": "pmndrs/zustand", "url": "https://github.com/pmndrs/zustand", "sha": "382d29c485e67018c06e75ec7235130d0968522c", "licence": "MIT"}
+  ]
+}

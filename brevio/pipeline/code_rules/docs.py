@@ -2,7 +2,7 @@
 
 The title and what a rule catches come from ``PR_RULES_122``. Why it exists and its bad and good example
 come from ``details.DETAILS``. How it is checked is worked out from the code: ``details.SCANS`` for a
-scanner, and ``dev_rules.slice_micro_rules`` for the cards a slice gets. Standard library only, so the
+scanner, and ``dev_rules.slice_micro_rules`` for the one-line reminders of ``brief``. Standard library only, so the
 exported package carries it.
 
 Each page is also a search landing page (ADOPTION.md E38, 2026-11-05): front matter with a search-shaped title
@@ -23,8 +23,9 @@ import re
 import sys
 
 from brevio.pipeline import dev_rules
-from brevio.pipeline.code_rules import PR_RULES_122, STATUS_REASONS, rule_status
-from brevio.pipeline.code_rules.details import DETAILS, SCANS, scanned_by
+from brevio.pipeline.code_rules import PR_RULES_122, STATUS_REASONS, measured, rule_status
+from brevio.pipeline.code_rules.details import CHECKED, DETAILS, POINTERS, SCANS, SCOPE, scanned_by
+from brevio.pipeline.code_rules.hints import page_lines
 
 GROUPS = {
     1: "UI and mobile performance", 2: "Security and tenancy", 3: "Billing and money", 4: "Database and migrations",
@@ -32,10 +33,8 @@ GROUPS = {
     8: "Marketing and attribution", 9: "Type safety", 10: "API and network robustness",
     11: "State and concurrency", 12: "Memory and resource leaks", 13: "Observability and logging",
     14: "Auth and sessions", 15: "Error boundaries and fallback rendering", 16: "Supply chain",
-    17: "React and Next.js patterns", 18: "Accessibility (WCAG 2.1 AA)", 19: "Clean code",
+    17: "React and Next.js patterns", 18: "Accessibility (WCAG 2.1 AA)", 19: "Clean code", 20: "Test custody",
 }
-# Rules the dev scan checks against main in a git checkout, so no single-file example can run them.
-GIT_SCANS = frozenset({"R2.2"})
 _SAMPLE_PATHS = ("a.tsx", "apps/api/x.ts", "src/billing/x.ts", "schema.prisma", "a.test.ts",
                  "packages/contracts/x.ts", "a.ts")
 _BRACKET = re.compile(r"\[([^\]]*R\d+\.\d+[^\]]*)\]")
@@ -44,6 +43,8 @@ README = "README.md"
 # The language a page's examples are in, for its search title; a plain-text example names none.
 LANGUAGES = {"ts": "TypeScript", "tsx": "React and TypeScript", "py": "Python", "css": "CSS", "json": "package.json",
              "sql": "SQL", "html": "HTML"}      # every JSON example is a package.json
+# Rules that gained a Python check after the judged run (2026-11-13).
+PYTHON_CHECKS = frozenset({"R2.8", "R5.4"})
 RELATED = 4         # related rules linked from a page: the next ones of its group, in catalogue order
 
 
@@ -102,25 +103,34 @@ def related(rule_id: str) -> list[str]:
 
 def checked_by(rule_id: str, cards: frozenset[str]) -> list[str]:
     """How the code checks a rule, one line each; one line saying so when nothing does."""
-    out = []
+    out = [CHECKED[rule_id][0]] if rule_id in CHECKED else []
+    if rule_id in SCOPE:
+        out.append(f"What it reads: {SCOPE[rule_id]}")
     if rule_id in SCANS:
-        engine = SCANS[rule_id][0]
-        out.append("The harness's pre-flight scan of added lines (`dev_rules.scan_added_lines`); `brevio-core scan` "
-                   "does not run it." if engine == "dev"
-                   else "`brevio-core scan`: a scan of added lines (`code_rules.scan_added_lines_for_rules`).")
-    elif rule_id in GIT_SCANS:
-        out.append("The harness's pre-flight scan against `main`, in a git checkout (`dev_rules.scan_added_lines`); "
-                   "`brevio-core scan` does not run it.")
+        out.append("`brevio-core scan --surface` checks the lines you add for it; a plain `brevio-core scan` does not."
+                   if SCANS[rule_id][0] == "dev" else "`brevio-core scan` checks the lines you add for it.")
     if rule_id in cards:
-        out.append("A one-line card in the prompt of a slice that touches matching files "
-                   "(`dev_rules.slice_micro_rules`).")
-    return out or ["Nothing yet. No scanner and no slice card checks it: it is a standing rule for authors "
-                   "and reviewers."]
+        out.append("`brevio-core brief` and the `brief` tool of `brevio-core mcp` print a one-line reminder of it for a "
+                   "file that matches.")
+    out = out or ["Nothing yet. No `brevio-core` command checks it and no `brief` reminder names it: it is a standing "
+                  "rule for authors and reviewers."]
+    return [*out, POINTERS[rule_id]] if rule_id in POINTERS else out
+
+
+def _custody_silence(rule_id: str) -> str:
+    """How to silence a rule that ``check`` runs, which is not the scan's ignore comment for all of them."""
+    exempt = DETAILS[rule_id].exempt
+    parts = [CHECKED[rule_id][1], *([f"What the check already leaves alone: {exempt}"] if exempt else []),
+             "To change what the rule flags, edit its check in `gates/core_gates.py`. That is a code change and is "
+             "reviewed like one."]
+    return "\n\n".join(parts)
 
 
 def silence_text(rule_id: str) -> str:
+    if rule_id in CHECKED:
+        return _custody_silence(rule_id)
     detail = DETAILS[rule_id]
-    scanned = rule_id in SCANS or rule_id in GIT_SCANS
+    scanned = rule_id in SCANS
     # A person can silence one finding with a reason; an agent cannot (ROADMAP E21, plan review, 2026-11-05).
     lines = [f"A person can silence one finding with `brevio-core: ignore {rule_id} -- reason` on the line or the line "
              "above. Without the reason it does not count. An agent cannot silence it: the agent hook and the MCP "
@@ -130,13 +140,38 @@ def silence_text(rule_id: str) -> str:
         lines.append(f"What the scanner already leaves alone: {detail.exempt}")
     if scanned:
         lines.append("A scan reads only the lines you add, so a line that was already in the file is not flagged.")
-    lines.append("To change what the rule flags, edit its definition in `dev_rules.py` or `code_rules/__init__.py`. "
+    lines.append("To change what the rule flags, edit its check in the rule code of the package. "
                  "That is a code change and is reviewed like one.")
     return "\n\n".join(lines)
 
 
+def precision_text(rule_id: str) -> str:
+    """What the last judged run says about a rule, read from ``measured`` alone: that module is generated from
+    ``precision.json``, so a page shows no figure the file does not hold (improvement plan 2b, 2026-11-12)."""
+    fig = measured.RULES.get(rule_id)
+    where = f"corpus {measured.RUN['corpus']}, run on {measured.RUN['date']}"
+    if fig is None:
+        return "Not measured. No judged sample of this rule's hits exists."
+    python = (" The Python checks of this rule were added after this run, so they are not measured."
+              if rule_id in PYTHON_CHECKS else "")
+    if not fig["hits"]:
+        return f"Not measured: the rule had no hit in the corpus ({where}), so there was nothing to judge."
+    share = fig["precision"]
+    if share is None:
+        return f"Not measured yet: a sample of its hits was drawn ({where}) and not all of it is judged."
+    return (f"{round(share * 100)}% of {fig['judged']} judged hits were real, on human-written code, one "
+            f"reviewer ({where}). That is not how often the rule is right on code an agent wrote. See `docs/precision.md` "
+            "in the brevio-core repository for the verdicts, the commands to run it again and how to dispute one." + python)
+
+
 def _fence(lang: str, body: str) -> str:
     return f"```{'' if lang == 'text' else lang}\n{body.rstrip()}\n```"
+
+
+def _by_kind(rule_id: str) -> str:
+    """The fixes by kind of finding and language, for a rule that reports more than one kind (``hints``)."""
+    lines = page_lines(rule_id)
+    return "The fix depends on the finding and the language:\n\n" + "\n".join(lines) + "\n\n" if lines else ""
 
 
 def render(rule_id: str, cards: frozenset[str] | None = None) -> str:
@@ -153,12 +188,12 @@ def render(rule_id: str, cards: frozenset[str] | None = None) -> str:
             f"**Short answer:** {answer(rule_id)}\n\n"
             f"Group: {group}. Status: {rule_status(rule_id)}.{reason} Generated from the rule definitions; do not edit "
             "by hand.\n\n"
-            f"Playground: <https://brevio.pro/tools/agent-guard-playground?rule={rule_id}>\n\n"
             f"## What it catches\n\n{text}.\n\n"
             f"## Why\n\n{d.why}\n\n"
             f"## A bad example\n\n{_fence(d.lang, d.bad)}\n\n"
-            f"## A good example\n\n{_fence(d.lang, d.good)}\n\n"
+            f"## A good example\n\n{_fence(d.lang, d.good)}\n\n{_by_kind(rule_id)}"
             f"## How it is checked\n\n{checks}\n\n"
+            f"## Measured precision\n\n{precision_text(rule_id)}\n\n"
             f"## How to silence it\n\n{silence_text(rule_id)}\n\n"
             f"## Related rules\n\n{links}\n")
 
@@ -184,23 +219,25 @@ def page(rule_id: str, cards: frozenset[str] | None = None) -> str:
 
 
 def render_index(cards: frozenset[str] | None = None) -> str:
-    """The list of every rule page, grouped, saying which rules ``brevio-core scan`` checks and which only the harness's
-    pre-flight checks (they were counted together until 2026-11-05, which overstated what the package scans)."""
+    """The list of every rule page, grouped, saying which rules ``brevio-core scan`` checks and which only ``scan --surface``
+    checks (they were counted together until 2026-11-05, which overstated what the package scans)."""
     cards = card_ids() if cards is None else cards
     public = set(scanned_by("code"))
-    preflight = {r for r in PR_RULES_122 if (r in SCANS or r in GIT_SCANS) and r not in public}
+    surface = set(scanned_by("dev"))
     out = ["# Rules\n",
            f"One page per rule: what it catches, why, a bad and a good example, how it is checked and how to "
-           f"silence it. There are {len(PR_RULES_122)} rules. `brevio-core scan` checks {len(public)} of them. "
-           f"The harness's pre-flight checks {len(preflight)} more, which `brevio-core scan` does not run; "
-           f"{len(cards - public - preflight)} more are slice cards; the rest are standing rules. "
+           f"silence it. There are {len(PR_RULES_122)} rules. `brevio-core scan` checks {len(public)} of them and "
+           f"`brevio-core scan --surface` {len(surface)} more; "
+           f"{len(CHECKED)} more are checked by `brevio-core check`; {len(cards - public - surface)} more come with a "
+           "one-line reminder from `brevio-core brief`; the rest are standing rules for authors and reviewers. "
            "Generated from the rule definitions; do not edit by hand.\n"]
     major = 0
     for rid in rule_ids():
         if _key(rid)[0] != major:
             major = _key(rid)[0]
             out.append(f"\n## R{major}: {GROUPS[major]}\n")
-        mark = " (brevio-core scan)" if rid in public else " (harness pre-flight)" if rid in preflight else ""
+        mark = (" (brevio-core scan)" if rid in public else " (brevio-core scan --surface)" if rid in surface
+                else " (brevio-core check)" if rid in CHECKED else "")
         status = "" if rule_status(rid) == "stable" else f" ({rule_status(rid)})"
         out.append(f"- [{rid}]({filename(rid)}) {_title_and_text(rid)[0]}{mark}{status}")
     return "\n".join(out) + "\n"

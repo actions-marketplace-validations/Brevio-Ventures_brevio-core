@@ -1,0 +1,426 @@
+{
+  "before": {
+    "date": "2026-11-05",
+    "precision": {
+      "R13.1": {
+        "false_positives": 8,
+        "hits": 8,
+        "precision": 0.0,
+        "sampled": 8,
+        "true_positives": 0,
+        "unjudged": 0
+      },
+      "R18.1": {
+        "false_positives": 1,
+        "hits": 8,
+        "precision": 0.875,
+        "sampled": 8,
+        "true_positives": 7,
+        "unjudged": 0
+      },
+      "R18.5": {
+        "false_positives": 1,
+        "hits": 7,
+        "precision": 0.8571,
+        "sampled": 7,
+        "true_positives": 6,
+        "unjudged": 0
+      },
+      "R2.5": {
+        "false_positives": 8,
+        "hits": 77,
+        "precision": 0.6,
+        "sampled": 20,
+        "true_positives": 12,
+        "unjudged": 0
+      },
+      "R5.4": {
+        "false_positives": 9,
+        "hits": 93,
+        "precision": 0.55,
+        "sampled": 20,
+        "true_positives": 11,
+        "unjudged": 0
+      },
+      "R6.3": {
+        "false_positives": 14,
+        "hits": 135,
+        "precision": 0.3,
+        "sampled": 20,
+        "true_positives": 6,
+        "unjudged": 0
+      },
+      "R9.1": {
+        "false_positives": 0,
+        "hits": 989,
+        "precision": 1.0,
+        "sampled": 20,
+        "true_positives": 20,
+        "unjudged": 0
+      },
+      "R9.2": {
+        "false_positives": 0,
+        "hits": 337,
+        "precision": 1.0,
+        "sampled": 20,
+        "true_positives": 20,
+        "unjudged": 0
+      }
+    },
+    "tool": {
+      "harness_commit": "a0dd7779b394f22d774be76e9ce4438d9fa1e8fd",
+      "python": "3.12.3",
+      "scanner_sha256": "ad8a1363c89658c562508f6d98b1653b371cf8c9b76871a133f82bb6f4d4a63d",
+      "uncommitted_changes": false
+    },
+    "totals": {
+      "files": 19165,
+      "hits": 1654,
+      "hits_by_rule": {
+        "R13.1": 8,
+        "R18.1": 8,
+        "R18.5": 7,
+        "R2.5": 77,
+        "R5.4": 93,
+        "R6.3": 135,
+        "R9.1": 989,
+        "R9.2": 337
+      },
+      "lines": 3365758,
+      "repos": 10
+    }
+  },
+  "commands": [
+    "python tools/precision_run.py --cache CACHE --out OUT --seed docs",
+    "git init -q CACHE/<owner>__<repo>",
+    "git -C CACHE/<owner>__<repo> fetch -q --depth 1 --no-tags <url> <sha>",
+    "git -C CACHE/<owner>__<repo> checkout -q --detach FETCH_HEAD",
+    "cd CACHE/<owner>__<repo> && python -I -c \"import sys; sys.path.insert(0, sys.argv[1]); from brevio.pipeline import core_cli; raise SystemExit(core_cli.main(sys.argv[2:]))\" TREE scan --fail-on all ."
+  ],
+  "corpus": {
+    "name": "ts-react-oss"
+  },
+  "date": "2026-11-06",
+  "method": {
+    "context_lines": 3,
+    "export_set": "0.4",
+    "poor_below": 0.7,
+    "sample_per_rule": 20,
+    "scan_args": [
+      "scan",
+      "--fail-on",
+      "all",
+      "."
+    ],
+    "seed": "e35"
+  },
+  "moved_from": {
+    "R2.8": "R2.5"
+  },
+  "precision": {
+    "R13.1": {
+      "false_positives": 0,
+      "hits": 0,
+      "precision": null,
+      "sampled": 0,
+      "true_positives": 0,
+      "unjudged": 0
+    },
+    "R18.1": {
+      "false_positives": 1,
+      "hits": 8,
+      "precision": 0.875,
+      "sampled": 8,
+      "true_positives": 7,
+      "unjudged": 0
+    },
+    "R18.5": {
+      "false_positives": 1,
+      "hits": 7,
+      "precision": 0.8571,
+      "sampled": 7,
+      "true_positives": 6,
+      "unjudged": 0
+    },
+    "R2.8": {
+      "false_positives": 0,
+      "hits": 57,
+      "precision": 1.0,
+      "sampled": 20,
+      "true_positives": 20,
+      "unjudged": 0
+    },
+    "R5.4": {
+      "false_positives": 5,
+      "hits": 78,
+      "precision": 0.75,
+      "sampled": 20,
+      "true_positives": 15,
+      "unjudged": 0
+    },
+    "R6.3": {
+      "false_positives": 14,
+      "hits": 135,
+      "precision": 0.3,
+      "sampled": 20,
+      "true_positives": 6,
+      "unjudged": 0
+    },
+    "R9.1": {
+      "false_positives": 0,
+      "hits": 987,
+      "precision": 1.0,
+      "sampled": 20,
+      "true_positives": 20,
+      "unjudged": 0
+    },
+    "R9.2": {
+      "false_positives": 0,
+      "hits": 334,
+      "precision": 1.0,
+      "sampled": 20,
+      "true_positives": 20,
+      "unjudged": 0
+    }
+  },
+  "repos": [
+    {
+      "files": 267,
+      "hits": {
+        "R13.1": 0,
+        "R18.1": 0,
+        "R18.5": 0,
+        "R2.8": 0,
+        "R5.4": 0,
+        "R6.3": 9,
+        "R9.1": 7,
+        "R9.2": 5
+      },
+      "hits_total": 21,
+      "licence": "MIT",
+      "lines": 25599,
+      "name": "vercel/swr",
+      "sha": "8148ef012fd5b317d1e8ec2da4b2ca0673f63c0f",
+      "url": "https://github.com/vercel/swr"
+    },
+    {
+      "files": 4506,
+      "hits": {
+        "R13.1": 0,
+        "R18.1": 0,
+        "R18.5": 0,
+        "R2.8": 4,
+        "R5.4": 5,
+        "R6.3": 0,
+        "R9.1": 5,
+        "R9.2": 0
+      },
+      "hits_total": 14,
+      "licence": "MIT",
+      "lines": 612035,
+      "name": "shadcn-ui/ui",
+      "sha": "8a3536678a528cc012b9e62484290e79d0be410f",
+      "url": "https://github.com/shadcn-ui/ui"
+    },
+    {
+      "files": 2709,
+      "hits": {
+        "R13.1": 0,
+        "R18.1": 4,
+        "R18.5": 0,
+        "R2.8": 0,
+        "R5.4": 15,
+        "R6.3": 0,
+        "R9.1": 47,
+        "R9.2": 23
+      },
+      "hits_total": 89,
+      "licence": "MIT",
+      "lines": 281038,
+      "name": "TanStack/query",
+      "sha": "284abac02d34f88ceb119c2af3fd3cf400b64a7a",
+      "url": "https://github.com/TanStack/query"
+    },
+    {
+      "files": 4783,
+      "hits": {
+        "R13.1": 0,
+        "R18.1": 0,
+        "R18.5": 0,
+        "R2.8": 0,
+        "R5.4": 0,
+        "R6.3": 2,
+        "R9.1": 227,
+        "R9.2": 68
+      },
+      "hits_total": 297,
+      "licence": "MIT",
+      "lines": 548772,
+      "name": "TanStack/table",
+      "sha": "c14e0221b1e656c7bb35e7b3d4cdf188719a3599",
+      "url": "https://github.com/TanStack/table"
+    },
+    {
+      "files": 1267,
+      "hits": {
+        "R13.1": 0,
+        "R18.1": 0,
+        "R18.5": 0,
+        "R2.8": 8,
+        "R5.4": 1,
+        "R6.3": 0,
+        "R9.1": 96,
+        "R9.2": 48
+      },
+      "hits_total": 153,
+      "licence": "MIT",
+      "lines": 170751,
+      "name": "trpc/trpc",
+      "sha": "6ea3d9873854564198c077df20a1db2f01bc2ae3",
+      "url": "https://github.com/trpc/trpc"
+    },
+    {
+      "files": 2087,
+      "hits": {
+        "R13.1": 0,
+        "R18.1": 0,
+        "R18.5": 0,
+        "R2.8": 14,
+        "R5.4": 0,
+        "R6.3": 9,
+        "R9.1": 10,
+        "R9.2": 36
+      },
+      "hits_total": 69,
+      "licence": "MIT",
+      "lines": 671889,
+      "name": "facebook/lexical",
+      "sha": "dfe058a840e35e1e796bc69ad2335703b004502e",
+      "url": "https://github.com/facebook/lexical"
+    },
+    {
+      "files": 1970,
+      "hits": {
+        "R13.1": 0,
+        "R18.1": 3,
+        "R18.5": 5,
+        "R2.8": 24,
+        "R5.4": 30,
+        "R6.3": 112,
+        "R9.1": 491,
+        "R9.2": 85
+      },
+      "hits_total": 750,
+      "licence": "Apache-2.0",
+      "lines": 588630,
+      "name": "microsoft/playwright",
+      "sha": "5c55bfa2c7a65962eebdaa60c6a51cbd230305f0",
+      "url": "https://github.com/microsoft/playwright"
+    },
+    {
+      "files": 723,
+      "hits": {
+        "R13.1": 0,
+        "R18.1": 1,
+        "R18.5": 2,
+        "R2.8": 3,
+        "R5.4": 6,
+        "R6.3": 0,
+        "R9.1": 67,
+        "R9.2": 38
+      },
+      "hits_total": 117,
+      "licence": "MIT",
+      "lines": 231523,
+      "name": "excalidraw/excalidraw",
+      "sha": "7ded689cad49331167e29fd88b38f38d3736d576",
+      "url": "https://github.com/excalidraw/excalidraw"
+    },
+    {
+      "files": 759,
+      "hits": {
+        "R13.1": 0,
+        "R18.1": 0,
+        "R18.5": 0,
+        "R2.8": 4,
+        "R5.4": 21,
+        "R6.3": 3,
+        "R9.1": 23,
+        "R9.2": 31
+      },
+      "hits_total": 82,
+      "licence": "MIT",
+      "lines": 209868,
+      "name": "remix-run/react-router",
+      "sha": "db80dda076ec9cdcefff480079252fe0c977710e",
+      "url": "https://github.com/remix-run/react-router"
+    },
+    {
+      "files": 55,
+      "hits": {
+        "R13.1": 0,
+        "R18.1": 0,
+        "R18.5": 0,
+        "R2.8": 0,
+        "R5.4": 0,
+        "R6.3": 0,
+        "R9.1": 14,
+        "R9.2": 0
+      },
+      "hits_total": 14,
+      "licence": "MIT",
+      "lines": 10626,
+      "name": "pmndrs/zustand",
+      "sha": "382d29c485e67018c06e75ec7235130d0968522c",
+      "url": "https://github.com/pmndrs/zustand"
+    }
+  ],
+  "review": {
+    "R13.1": "Rewritten: it flags known credential formats, a JWT, or a random-looking value bound to a secret, token, password or API key name, and leaves placeholders, public and publishable names, Stripe `pk_` keys and Algolia or DocSearch keys alone. It has no hit on this corpus, so no precision: the corpus holds no hard-coded credential. Its earlier false positives (public search keys, a storage entry name) are tests now.",
+    "R18.1": "Kept. Fixed: comment lines and test files are skipped. Left: a block-comment line that does not start with an asterisk.",
+    "R18.5": "Kept. Fixed: test files, and a handler that only stops propagation, are skipped.",
+    "R2.8": "New ID: these findings carried R2.5, whose title is the SSRF and timeout guard. Kept `stable`. Fixed: vendored folders, minified files and bundles are skipped; TypeScript declaration files (`.d.ts`, `.d.mts`, `.d.cts`) are skipped; test fixture assets are skipped; static literal eval probes in test files are skipped; and `dangerouslySetInnerHTML` with sanitizers (`escapeHtml`, `DOMPurify.sanitize`, `sanitizeHtml`) is accepted (2026-11-06). No sampled hit was judged false after these fixes.",
+    "R5.4": "Kept. Fixed: vendored folders, minified files and bundles are skipped. Left: unminified React and Vue builds that one repository keeps as test assets in a folder with another name; a project excludes them with `exclude` in brevio-core.toml.",
+    "R6.3": "Preview: it reports and never fails a scan. Most hits are deliberate waits in a browser-automation project's own tests (checking that nothing happens in a given time) and test sources written as strings. No small pattern fix is clearly correct: flagging a sleep only before an assertion that already waits would keep few of the real hits. Candidate for the maintainer to narrow or retire.",
+    "R9.1": "Kept. Fixed: comment lines no longer match.",
+    "R9.2": "Kept. Since declaration files are skipped (2026-11-06), three `@ts-ignore` comments in one Playwright `.d.ts` are no longer reported."
+  },
+  "rules": {
+    "R13.1": "Zero secret logging: redact passwords, tokens, API keys, and authorization headers",
+    "R18.1": "Meaningful image alternative text: informative images supply descriptive alt attribute",
+    "R18.5": "No click handlers on non-interactive elements: divs/spans with onClick specify role='button'",
+    "R2.8": "No unsafe code or HTML sinks: no eval or new Function on strings; dangerouslySetInnerHTML only with sanitised HTML",
+    "R5.4": "No silent exception swallowing: log or surface errors; never use empty catch blocks",
+    "R6.3": "Deterministic condition waits: never use waitForTimeout/sleep in tests",
+    "R9.1": "No untyped escape hatches: no `as any` casts or `z.any()` schemas in production source",
+    "R9.2": "No silenced type errors: no @ts-ignore; every @ts-expect-error states its reason"
+  },
+  "sample_totals": {
+    "false_positives": 21,
+    "sampled": 115,
+    "true_positives": 94
+  },
+  "schema": 1,
+  "tool": {
+    "harness_commit": "bbdb617fdb0f7553b295b7a1dc6f43925a369a05",
+    "python": "3.12.3",
+    "scanner_sha256": "d11bdcf0ad03d4ec5fcf3eb103a60e386c036eb2e8ad61f97cc77e4d27ae4fe4",
+    "uncommitted_changes": true
+  },
+  "totals": {
+    "files": 19126,
+    "hits": 1606,
+    "hits_by_rule": {
+      "R13.1": 0,
+      "R18.1": 8,
+      "R18.5": 7,
+      "R2.8": 57,
+      "R5.4": 78,
+      "R6.3": 135,
+      "R9.1": 987,
+      "R9.2": 334
+    },
+    "lines": 3350731,
+    "repos": 10
+  }
+}

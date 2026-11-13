@@ -1,9 +1,8 @@
 """Deterministic 100-Point Agentic Engine Optimization (AEO) Scorecard & Dual-Surface Auditor.
 
 Synthesizes the 5-pillar ``addyosmani/agentic-seo`` 100-point rubric and the
-``codydeny/agent-seo-skill`` source-vs-live dual-surface audit for both:
-1. Brevio's own Product, QA, and Growth pipelines (0-token auto-publish gate & pre-merge QA), and
-2. ``lead_scout.py`` prospect domain teardowns (replacing 2-boolean checks with a 100-pt scorecard).
+``codydeny/agent-seo-skill`` source-vs-live dual-surface audit, for the pages that
+``brevio-core aeo`` scores: a 100-pt scorecard in place of 2-boolean checks.
 
 5 Weighted Pillars (100 points total):
   - Discovery (25 pts): AI crawler allowances in robots.txt, token-counted /llms.txt, canonical URL.
@@ -13,8 +12,9 @@ Synthesizes the 5-pillar ``addyosmani/agentic-seo`` 100-point rubric and the
     Markdown content negotiation (Accept: text/markdown or .md mirror).
   - Capability Signaling (15 pts): /skill.md or /.well-known/agent-card.json advertising callable
     agent actions / MCP endpoints.
-  - UX Bridge (10 pts): Deterministic 1-click handoff deep-links (?domain=, /geo-audit,
-    /claim-audit, /teardown/) that convert agent citations or human readers without a login wall.
+  - UX Bridge (10 pts): a one-click hand-off link on a product's own funnel pages. It is optional:
+    ``brevio-core aeo`` leaves it out (``score_page(ux_bridge=False)``) and scores the other four pillars out of 90,
+    scaled to 100, because it is advice about one product's funnel and not a gap that applies to a site in general (2026-11-13).
 """
 from __future__ import annotations
 
@@ -227,29 +227,27 @@ def _grade(score: int) -> str:
 def score_page(html: str = "", url: str = "", headers: dict | None = None,
                robots_txt: str | None = "", llms_txt: str | None = "",
                skill_md: str | None = "", agent_card: str | None = "",
-               has_md_mirror: bool = False, has_mcp_manifest: bool = False) -> dict:
-    """Compute the full 100-Point Agentic SEO Scorecard across all 5 pillars."""
+               has_md_mirror: bool = False, has_mcp_manifest: bool = False, ux_bridge: bool = True) -> dict:
+    """Compute the 100-Point Agentic SEO Scorecard across the 5 pillars; without ``ux_bridge`` the four others, scaled."""
     eff_agent_card = (agent_card or "") or ('{"mcp":true}' if has_mcp_manifest else "")
     d = score_discovery(html, headers=headers, robots_txt=robots_txt or "", llms_txt=llms_txt or "")
     s = score_structure(html)
     t = score_token_economics(html, headers=headers, has_md_mirror=has_md_mirror)
     c = score_capability_signaling(html, skill_md=skill_md or "", agent_card=eff_agent_card)
-    u = score_ux_bridge(html)
-    total = d["score"] + s["score"] + t["score"] + c["score"] + u["score"]
-    gaps = d["gaps"] + s["gaps"] + t["gaps"] + c["gaps"] + u["gaps"]
+    u = score_ux_bridge(html) if ux_bridge else None
+    parts = [d, s, t, c] + ([u] if u else [])
+    total = round(100 * sum(p["score"] for p in parts) / sum(p["max"] for p in parts))
+    gaps = [g for p in parts for g in p["gaps"]]
     tok_pillar = {**t, **t["token_stats"]}
+    pillars = {"discovery": d, "structure": s, "token_economics": tok_pillar, "capability": c}
+    if u:
+        pillars["ux_bridge"] = u
     return {
         "url": url,
         "score": total,
         "total": total,
         "grade": _grade(total),
-        "pillars": {
-            "discovery": d,
-            "structure": s,
-            "token_economics": tok_pillar,
-            "capability": c,
-            "ux_bridge": u,
-        },
+        "pillars": pillars,
         "gaps": gaps,
         "blocked_bots": d["blocked_bots"],
         "token_stats": t["token_stats"],

@@ -1,11 +1,11 @@
-"""``brevio-core up``: what a team sync would take from this repository, and the waitlist (ROADMAP E37, 2026-11-05).
+"""``brevio-core up``: what a team sync would take from this repository (ROADMAP E37, 2026-11-05).
 
 The 0.6 set ships ``up`` as a preview. It lists each file a sync would take (the learned guards, the savings counts and
-the agent rules ``learn`` writes), with its size and the fields taken from it, and prints the waitlist link. It uploads
-nothing, makes no link that carries data, and holds no network code, so it is under the same no-network test as
-``scan``. The sending ``up`` stays in the harness (``cloud_bridge``, G15): brevio.pro has no page that receives a sync
-yet (``/onboard`` ignores the import, ``/teams`` is not there; checked 2026-11-05). When that page exists, the sending
-command can ship here with the consent prompt PRIVACY.md documents.
+the agent rules ``learn`` writes), with its size and the fields taken from it. It uploads nothing, makes no link that
+carries data, and holds no network code, so it is under the same no-network test as ``scan``. The sending ``up`` is not
+part of this release: brevio.pro has no page that receives a sync yet (``/onboard`` ignores the import,
+``/teams`` is not there; checked 2026-11-05). Until a page exists that this repository can show, no link to it is printed
+(2026-11-12, improvement plan). When it exists, the sending command can ship here with the consent prompt PRIVACY.md documents.
 
 This module also holds the one labelled upgrade line that ``scan --format markdown`` (the pull request comment) and
 ``gain`` end with, unless ``--no-upgrade-line`` is given. It never reaches an agent: the hook and the MCP server print
@@ -25,17 +25,16 @@ from brevio.pipeline.core_memory import MEMORY_DIR, MEMORY_FILE
 from brevio.pipeline.gates import defect_compiler, dopamine_ledger
 from brevio.pipeline.rule_host import GIT
 
-TEAMS_URL = "https://brevio.pro/teams"
-REF_CLI = "cli"     # the waitlist link of `up` itself; the scan report uses "pr-comment" and `gain` uses "gain"
-HELP = "show what a team sync would take from this repository, and the waitlist link (uploads nothing)"
-# What the harness's sync takes from the savings ledger (``cloud_bridge.build_cloud_import_payload``): counts, no events.
+HELP = "show what a team sync would take from this repository (uploads nothing)"
+# What a sync would take from the savings ledger: counts, no events.
 STATS_FIELDS = ("total_interceptions", "savings_measured", "tokens_saved", "cost_saved_usd")
 WHOLE_TEXT = "the whole text"
 
 
 def _git(cwd: str, *args: str) -> str:
     try:
-        r = subprocess.run([*GIT, "-C", cwd, *args], capture_output=True, text=True, timeout=30)
+        r = subprocess.run([*GIT, "-C", cwd, *args],
+                           capture_output=True, encoding="utf-8", errors="replace", timeout=30)
     except (OSError, subprocess.SubprocessError):
         return ""
     return r.stdout if r.returncode == 0 else ""
@@ -54,12 +53,10 @@ def recent_authors(workspace: str) -> int:
 
 
 def upgrade_line(ref: str) -> str:
-    """The one labelled upgrade line, its link tagged with where it was shown (no number, no absolute claim)."""
-    return f"Teams: share learned guards and suppression approvals across repos — {TEAMS_URL}?ref={ref}"
-
-
-def waitlist_url() -> str:
-    return f"{TEAMS_URL}?ref={REF_CLI}"
+    """The one labelled line that says what Teams would be and that it is not built. It holds no link: no page that this
+    repository can show exists yet, and no number or absolute claim. ``ref`` says where it is shown and is not printed."""
+    return ("Teams: central sharing of learned guards and suppression approvals across an organisation is not built yet; "
+            "`brevio-core up` lists what it would take.")
 
 
 def _guard_fields(path: str) -> str:
@@ -102,7 +99,7 @@ def render(files: list[dict[str, Any]], workspace: str | None = None) -> str:
         if authors > 1:
             lines += ["", f"Note: {authors} recent contributors are active on this repository without shared guard sync."]
     lines += ["", "and the repository name only as a salted hash. When the sync ships, it asks before anything is sent,",
-              "as PRIVACY.md describes.", "", f"Join the waitlist: {waitlist_url()}"]
+              "as PRIVACY.md describes."]
     return "\n".join(lines) + "\n"
 
 
@@ -113,7 +110,7 @@ def main(argv: list[str], prog: str = "brevio-core up") -> int:
     ws = agent_host.config.WORKSPACE_DIR     # read now: the harness binds its own workspace
     files = planned_files(ws)
     if args.json:
-        print(json.dumps({"available": False, "files": files, "recent_authors": recent_authors(ws), "waitlist": waitlist_url()}, indent=2))
+        print(json.dumps({"available": False, "files": files, "recent_authors": recent_authors(ws)}, indent=2))
     else:
         sys.stdout.write(render(files, workspace=ws))
     return 0

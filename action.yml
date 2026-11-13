@@ -6,7 +6,7 @@
 # a write token to a run on code from a fork are never supported: the scan reads the code under review, and that code
 # must never run next to a write token (SECURITY-REVIEW.md). Third-party actions are pinned to full commit SHAs.
 name: 'Brevio Gate'
-description: 'Pull-request gate, no model call: 13 scanned rules as line patterns on the added lines, no secrets'
+description: 'Pull-request gate, no model call: 14 scanned rules as line patterns on the added lines, no secrets'
 author: 'Brevio'
 branding:
   icon: 'shield'
@@ -39,7 +39,23 @@ inputs:
   package-version:
     description: 'brevio-core version to install; the default is the release of this Action, "latest" takes the newest'
     required: false
-    default: '0.9.1'
+    default: '0.10.0'
+  allow-new-suppressions:
+    description: 'true when a person reviewed the ignore comments and baseline entries this change adds (the scan then does not report them); keep false for a change nobody reviewed'
+    required: false
+    default: 'false'
+  custody:
+    description: 'Test custody on the pull request (preview): off, report (the R20 findings go in the comment and do not fail the check) or fail (they fail it)'
+    required: false
+    default: 'off'
+  paths:
+    description: 'Files or folders to scan, separated by spaces (one per line when a name holds spaces), relative to working-directory; empty: the whole change'
+    required: false
+    default: ''
+  working-directory:
+    description: 'Folder to run in: where .brevio/baseline.json and brevio-core.toml are read from; "." is the repository root'
+    required: false
+    default: '.'
 outputs:
   status:
     description: 'pass or fail'
@@ -47,6 +63,9 @@ outputs:
   findings:
     description: 'How many findings the scan reported (not counting silenced ones)'
     value: ${{ steps.report.outputs.findings }}
+  custody-findings:
+    description: 'How many test-custody findings the custody check reported; 0 when custody is off'
+    value: ${{ steps.report.outputs.custody_findings }}
 runs:
   using: 'composite'
   steps:
@@ -54,11 +73,21 @@ runs:
       shell: bash
       env:
         EVENT: ${{ github.event_name }}
+        CUSTODY: ${{ inputs.custody }}
+        ALLOW_NEW: ${{ inputs.allow-new-suppressions }}
       run: |
         case "$EVENT" in
           pull_request|merge_group|push) ;;
           *) echo "::error title=brevio-core::brevio-core runs on pull_request, merge_group and push, not on $EVENT (see SECURITY-REVIEW.md)"
              exit 2 ;;
+        esac
+        case "$CUSTODY" in
+          off|report|fail) ;;
+          *) echo "::error title=brevio-core::custody is off, report or fail, not $CUSTODY"; exit 2 ;;
+        esac
+        case "$ALLOW_NEW" in
+          true|false) ;;
+          *) echo "::error title=brevio-core::allow-new-suppressions is true or false, not $ALLOW_NEW"; exit 2 ;;
         esac
     - name: brevio-core / set up Python
       uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
@@ -75,6 +104,7 @@ runs:
     - name: brevio-core / scan
       id: scan
       shell: bash
+      working-directory: ${{ inputs.working-directory }}
       env:
         BASE_INPUT: ${{ inputs.base }}
         EVENT: ${{ github.event_name }}
@@ -84,6 +114,8 @@ runs:
         DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         FAIL_ON: ${{ inputs.fail-on }}
         FOOTER: ${{ inputs.footer }}
+        ALLOW_NEW: ${{ inputs.allow-new-suppressions }}
+        SCAN_PATHS: ${{ inputs.paths }}
       run: |
         base="$BASE_INPUT"
         if [ -z "$base" ]; then
@@ -102,10 +134,19 @@ runs:
         rules_url="https://brevio-ventures.github.io/brevio-core/rules/"     # the rule pages on GitHub Pages (docs/, the Docs workflow); the CLI appends the ID
         # footer: false turns off every line of ours, the report's closing Teams line too (ROADMAP E37, 2026-11-05).
         quiet=""; if [ "$FOOTER" = "false" ]; then quiet="--no-upgrade-line"; fi
+        # allow-new-suppressions: a person reviewed the ignore comments and baseline entries of this change (revisit D25).
+        allow=""; if [ "$ALLOW_NEW" = "true" ]; then allow="--allow-new-suppressions"; fi
+        # paths: one per line when the value has a line break (a name may then hold spaces), else split on spaces; never a glob.
+        targets=()
+        if [[ "$SCAN_PATHS" == *$'\n'* ]]; then
+          while IFS= read -r line; do line="${line%$'\r'}"; if [ -n "$line" ]; then targets+=("$line"); fi; done <<< "$SCAN_PATHS"
+        else
+          set -f; read -r -a targets <<< "$SCAN_PATHS"; set +f
+        fi
         out="$RUNNER_TEMP/brevio-core.md"
         err="$RUNNER_TEMP/brevio-core.err"
-        brevio-core scan --diff "$base" --fail-on "$FAIL_ON" --format markdown --rules-url "$rules_url" $quiet \
-          --sarif brevio-gate.sarif > "$out" 2> "$err" && rc=0 || rc=$?
+        brevio-core scan --diff "$base" --fail-on "$FAIL_ON" --format markdown --rules-url "$rules_url" $quiet $allow \
+          --sarif brevio-gate.sarif "${targets[@]}" > "$out" 2> "$err" && rc=0 || rc=$?
         # The scan's own messages quote code under review: no line of them may act as a workflow command.
         stop="brevio-core-$(date +%s%N)"
         echo "::stop-commands::$stop"
@@ -113,16 +154,33 @@ runs:
         echo "::$stop::"
         nothing=false
         if [ "$rc" -eq 0 ] && grep -q ' in 0 file(s)' "$err"; then nothing=true; fi
-        { echo "rc=$rc"; echo "nothing=$nothing"; } >> "$GITHUB_OUTPUT"
+        { echo "rc=$rc"; echo "nothing=$nothing"; echo "base=$base"; } >> "$GITHUB_OUTPUT"
+    - name: brevio-core / test custody
+      id: custody
+      if: inputs.custody != 'off'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        BASE: ${{ steps.scan.outputs.base }}
+      run: |
+        # The R20 checks need the base: check compares the working tree with it. A failed run leaves no JSON and the report says so.
+        rm -f "$RUNNER_TEMP/brevio-core-custody.json"
+        brevio-core check --base "$BASE" --format json > "$RUNNER_TEMP/brevio-core-custody.json" 2> "$RUNNER_TEMP/brevio-core-custody.err" || true
+        stop="brevio-core-$(date +%s%N)"
+        echo "::stop-commands::$stop"
+        cat "$RUNNER_TEMP/brevio-core-custody.err" >&2
+        echo "::$stop::"
     - name: brevio-core / summary and annotations
       id: report
       shell: python
+      working-directory: ${{ inputs.working-directory }}
       env:
         RC: ${{ steps.scan.outputs.rc }}
         NOTHING: ${{ steps.scan.outputs.nothing }}
         FOOTER: ${{ inputs.footer }}
         PRIVATE: ${{ github.event.repository.private }}
         FAIL_ON: ${{ inputs.fail-on }}
+        CUSTODY: ${{ inputs.custody }}
       run: |
         import json
         import os
@@ -166,7 +224,8 @@ runs:
             path = where.get("artifactLocation", {}).get("uri", "")
             line = where.get("region", {}).get("startLine", 1)
             title = esc(f"brevio-core {r.get('ruleId', '')}".strip(), prop=True)
-            level = "error" if r.get("level") == "error" and fail_on == "findings" else "warning"
+            # An error annotation where the check can be red because of the finding: its SARIF level is error and fail-on is not none.
+            level = "error" if r.get("level") == "error" and fail_on != "none" else "warning"
             if level == "error":
                 print(f"::error file={esc(path, prop=True)},line={line},title={title}::{esc(r.get('message', {}).get('text', ''))}")
             else:
@@ -179,38 +238,29 @@ runs:
             report = "### brevio-core\n\nNothing to scan: this change adds no lines in the files the rules read."
         elif not report:
             report = f"### brevio-core\n\nThe scan stopped with exit code {env.get('RC') or '?'}; the job log says why."
+        custody_mode = env.get("CUSTODY", "off")
+        custody_count = 0
+        custody_ran = True
+        if custody_mode in ("report", "fail"):
+            # The R20 findings of `brevio-core check --base`, drawn by the installed package; a missing file or an older package
+            # that cannot draw them is said in the comment, not left silent.
+            try:
+                found = json.loads(read(os.path.join(tmp, "brevio-core-custody.json")) or "{}")["checks"]["test_custody"]
+            except (ValueError, KeyError, TypeError):
+                found = None
+            try:
+                from brevio.pipeline import core_markdown
+                section = core_markdown.custody_section(found, custody_mode, "https://brevio-ventures.github.io/brevio-core/rules/")
+            except (ImportError, AttributeError):
+                section = "### brevio-core test custody\n\nThe installed brevio-core cannot draw this section; use a newer package-version."
+                found = None
+            custody_count = len(found or [])
+            custody_ran = found is not None
+            report = report + "\n\n" + section.strip()
         write(env["GITHUB_STEP_SUMMARY"], report + "\n", "a")
 
         footer = env.get("FOOTER", "auto")
         show_viral = footer == "true" or (footer == "auto" and env.get("PRIVATE") != "true")
-        if show_viral and env.get("NOTHING") != "true":
-            warnings = sum(1 for r in results if r.get("level") == "warning")
-            errors = len(results) - warnings
-            score = max(0, 100 - 10 * errors - 3 * warnings)
-            if score >= 100:
-                grade, color = "A+", "brightgreen"
-            elif score >= 90:
-                grade, color = "A", "brightgreen"
-            elif score >= 80:
-                grade, color = "B", "green"
-            elif score >= 70:
-                grade, color = "C", "yellow"
-            elif score >= 60:
-                grade, color = "D", "orange"
-            else:
-                grade, color = "F", "red"
-            grade_enc = grade.replace("+", "%2B")
-            badge = f"[![Agent Safety: {grade} ({score}/100)](https://img.shields.io/badge/agent%20safety-{grade_enc}%20({score}%2F100)-{color})](https://brevio.pro/tools/rules-encyclopedia)"
-            rids = sorted({str(r.get("ruleId", "")) for r in results if str(r.get("ruleId", "")).startswith("R")})
-            links = [f"[Test {rid} in Playground](https://brevio.pro/tools/agent-guard-playground?rule={rid})" for rid in rids]
-            links.append("[Rules Encyclopedia](https://brevio.pro/tools/rules-encyclopedia)")
-            scorecard = (
-                f"\n#### Agent Safety Scorecard: **{score}/100 ({grade})** {badge}\n\n"
-                + " · ".join(links) + "\n\n"
-                + f"<details><summary>Copy README badge Markdown</summary>\n\n```markdown\n{badge}\n```\n</details>\n"
-            )
-            write(env["GITHUB_STEP_SUMMARY"], scorecard, "a")
-
         if show_viral:
             repo = f"{env['GITHUB_SERVER_URL']}/Brevio-Ventures/brevio-core"
             tail = f"\n\n<sub>checked by [brevio-core]({repo})</sub>\n"
@@ -220,7 +270,7 @@ runs:
         write(os.path.join(tmp, "brevio-core-comment.md"), f"{MARKER}\n{quiet_mentions(report)}{tail}")
         write(os.path.join(tmp, "brevio-core-resolved.md"),
               f"{MARKER}\n### brevio-core\n\nResolved: no findings remain as of {sha}.{tail}")
-        write(env["GITHUB_OUTPUT"], f"findings={len(results)}\n", "a")
+        write(env["GITHUB_OUTPUT"], f"findings={len(results)}\ncustody_findings={custody_count}\ncustody_ran={str(custody_ran).lower()}\n", "a")
     - name: brevio-core / pull request comment
       if: inputs.comment != 'never' && github.event_name == 'pull_request'
       shell: bash
@@ -230,6 +280,7 @@ runs:
         MODE: ${{ inputs.comment }}
         RC: ${{ steps.scan.outputs.rc }}
         FINDINGS: ${{ steps.report.outputs.findings }}
+        CUSTODY_FINDINGS: ${{ steps.report.outputs.custody_findings }}
         PR_NUMBER: ${{ github.event.pull_request.number }}
         HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
       run: |
@@ -253,7 +304,7 @@ runs:
         existing=$(gh api --paginate "$api/issues/$PR_NUMBER/comments" \
           --jq '.[] | select(.body | startswith("<!-- brevio-core -->")) | .id' 2> "$err") || failed
         existing=$(printf '%s\n' "$existing" | head -n 1)
-        if [ "${FINDINGS:-0}" -gt 0 ] || [ "$MODE" = "always" ]; then
+        if [ $(( ${FINDINGS:-0} + ${CUSTODY_FINDINGS:-0} )) -gt 0 ] || [ "$MODE" = "always" ]; then
           body="$RUNNER_TEMP/brevio-core-comment.md"
         elif [ -n "$existing" ] && [ "$RC" = "0" ]; then
           body="$RUNNER_TEMP/brevio-core-resolved.md"      # a clean run edits the old comment, it never posts a new one
@@ -279,15 +330,23 @@ runs:
       continue-on-error: true
       uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
       with:
-        sarif_file: brevio-gate.sarif
+        sarif_file: ${{ inputs.working-directory }}/brevio-gate.sarif
         category: brevio-core
     - name: brevio-core / result
       id: result
       shell: bash
+      working-directory: ${{ inputs.working-directory }}
       env:
         RC: ${{ steps.scan.outputs.rc }}
         WANT_SARIF: ${{ inputs.sarif }}
+        CUSTODY: ${{ inputs.custody }}
+        CUSTODY_FINDINGS: ${{ steps.report.outputs.custody_findings }}
+        CUSTODY_RAN: ${{ steps.report.outputs.custody_ran }}
       run: |
         if [ "$WANT_SARIF" != "true" ]; then rm -f brevio-gate.sarif; fi
+        # custody: fail turns the check red on a test-custody finding, or when the custody check did not run, even if the scan passed.
+        if [ "$CUSTODY" = "fail" ] && [ "$RC" -eq 0 ]; then
+          if [ "${CUSTODY_FINDINGS:-0}" -gt 0 ] || [ "$CUSTODY_RAN" = "false" ]; then RC=1; fi
+        fi
         if [ "$RC" -eq 0 ]; then echo "status=pass" >> "$GITHUB_OUTPUT"; else echo "status=fail" >> "$GITHUB_OUTPUT"; fi
         exit "$RC"

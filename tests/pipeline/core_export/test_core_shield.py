@@ -17,6 +17,15 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
 
 
+SWALLOW = "def swallow():\n    try:\n        risky()\n    except:\n        pass\n"
+CLEAN = "def add(a: int, b: int) -> int:\n    return a + b\n"
+
+
+def _write(d: str, name: str, text: str) -> None:
+    with open(os.path.join(d, name), "w", encoding="utf-8") as fh:
+        fh.write(text)
+
+
 def _run_cli(cwd: str, *args: str) -> subprocess.CompletedProcess[str]:
     entry = (
         "import sys; sys.path.insert(0, sys.argv[1]); "
@@ -27,7 +36,7 @@ def _run_cli(cwd: str, *args: str) -> subprocess.CompletedProcess[str]:
         [sys.executable, "-I", "-c", entry, ROOT, *args],
         cwd=cwd,
         capture_output=True,
-        text=True,
+        encoding="utf-8",
         timeout=60,
     )
 
@@ -101,13 +110,14 @@ class TestExecuteShieldCommand(unittest.TestCase):
             self.assertTrue(res["matched"])
             self.assertEqual(res["command"], "roast")
             self.assertTrue(res["ok"])
-            self.assertIn("Agent Safety Score", res["markdown_reply"])
+            self.assertIn("score (preview)", res["markdown_reply"])
+            self.assertNotIn("Agent Safety Score", res["markdown_reply"])
 
     def test_fix_command_with_remediation_and_packet(self) -> None:
         with tempfile.TemporaryDirectory() as d:
             py_file = os.path.join(d, "app.py")
             with open(py_file, "w", encoding="utf-8") as fh:
-                fh.write("try:\n    pass\nexcept:\n    pass\n")
+                fh.write("try:\n    pass\nexcept:\n    done = 1\n")
             res = core_shield.execute_shield_command("@brevio fix", root=d)
             self.assertTrue(res["matched"])
             self.assertEqual(res["command"], "fix")
@@ -127,6 +137,20 @@ class TestExecuteShieldCommand(unittest.TestCase):
         self.assertTrue(res["matched"])
         self.assertFalse(res["ok"])
         self.assertIn("Unrecognized Command", res["markdown_reply"])
+
+    def test_the_shield_roast_counts_the_root_it_is_given_and_not_the_current_folder(self) -> None:
+        with tempfile.TemporaryDirectory() as here, tempfile.TemporaryDirectory() as there:
+            _write(here, "noisy.py", SWALLOW)
+            _write(there, "quiet.py", CLEAN)
+            old_cwd = os.getcwd()
+            os.chdir(here)
+            try:
+                res = core_shield.execute_shield_command("@brevio roast", root=there)
+            finally:
+                os.chdir(old_cwd)
+        self.assertTrue(res["ok"], res)
+        self.assertEqual(res["scorecard"]["files"], 1)
+        self.assertEqual(res["scorecard"]["finding_count"], 0)
 
 
 class TestShieldCLI(unittest.TestCase):

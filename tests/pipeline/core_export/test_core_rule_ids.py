@@ -43,14 +43,14 @@ def tearDownModule():
 
 
 def py(code):
-    res = subprocess.run([sys.executable, "-I", "-c", _PY + code, TREE], capture_output=True, text=True, timeout=60)
+    res = subprocess.run([sys.executable, "-I", "-c", _PY + code, TREE], capture_output=True, encoding="utf-8", timeout=60)
     assert res.returncode == 0, res.stderr
     return json.loads(res.stdout)
 
 
 def with_status(cwd, rule, status, *args):
     return subprocess.run([sys.executable, "-I", "-c", _STATUS, TREE, rule, status, *args], cwd=cwd, capture_output=True,
-                          text=True, timeout=60)
+                          encoding="utf-8", timeout=60)
 
 
 def rules(**entries):
@@ -71,10 +71,54 @@ class TestTheRecordedIds(unittest.TestCase):
                  "open(p, 'w').write(s.render(s.current()))\n"
                  "text = open(p).read()\n"
                  "print(json.dumps({'same': s.load(p) == s.current(), 'lines': text.count('\\n'), 'n': len(s.current()),"
-                 " 'committed': text == open(s.IDS_FILE).read()}))")
+                 " 'committed': s.render(s.load()) == open(s.IDS_FILE).read()}))")
         self.assertTrue(got["same"])
         self.assertEqual(got["lines"], got["n"] + 5)            # the braces, the format line and one line per rule
         self.assertTrue(got["committed"], "rule_ids.json is not in the form render() writes")
+
+    def test_the_id_file_holds_the_catalogue_but_for_a_title_that_was_reworded_and_a_rule_added_since_the_release(self):
+        """Changed on purpose (2026-11-13): the file was compared with the catalogue whole. A title reworded to what its
+        scan checks (``REWORDED``) stays as the last release recorded it until ``--write``, so only that line may differ.
+        Changed again for B2: the file holds what the last release held, so a rule added since is not in it. It is a preview
+        rule, and the release notes list it under Added; the catalogue holds no rule that the file has and it lacks."""
+        got = py("rec, cur = s.load(), s.current()\n"
+                 "added = s.notes(rec, cur).split('Added:\\n\\n')[1].split('\\n\\n')[0] if set(cur) - set(rec) else ''\n"
+                 "print(json.dumps({'gone': sorted(set(rec) - set(cur)),"
+                 " 'status': [r for r in cur if r in rec and rec[r]['status'] != cur[r]['status']],"
+                 " 'title': [r for r in cur if r in rec and rec[r]['title'] != cur[r]['title'] and s.REWORDED.get(r) != rec[r]['title']],"
+                 " 'unlisted': [r for r in cur if r not in rec and (cur[r]['status'] != 'preview' or '- ' + r + ' ' not in added)],"
+                 " 'reworded': sorted(r for r in s.REWORDED if r in rec and rec[r]['title'] == cur[r]['title'])}))")
+        self.assertEqual(got["gone"], [], "an ID of rule_ids.json has left the catalogue")
+        self.assertEqual(got["status"], [])
+        self.assertEqual(got["title"], [])
+        self.assertEqual(got["unlisted"], [], "a rule of the catalogue that the file lacks must be preview and listed as added")
+        self.assertEqual(got["reworded"], [], "REWORDED names a rule whose title was not reworded: empty it after --write")
+
+    def test_every_title_change_since_the_release_is_a_declared_reword_against_the_recorded_line(self):
+        """D15 (2026-11-13). Here and not in test_core_rules: that file runs in every export set, and the stability
+        module ships in the 0.6 set only."""
+        got = py("rec, cur = s.load(), s.current()\n"
+                 "changed = [r for r in cur if r in rec and rec[r]['title'] != cur[r]['title']]\n"
+                 "print(json.dumps({'undeclared': [r for r in changed if s.REWORDED.get(r) != rec[r]['title']],"
+                 " 'problems': s.problems(rec, cur)}))")
+        self.assertEqual(got["undeclared"], [])
+        self.assertEqual(got["problems"], [])
+
+    def test_the_release_notes_list_the_reworded_titles_and_the_new_rule(self):
+        got = py("print(json.dumps(s.notes(s.load(), s.current())))")
+        self.assertIn("Reworded (the ID and the status are unchanged; a note below says where the findings changed):", got)
+        self.assertIn("R10.1 Explicit HTTP request timeouts: Python requests calls pass timeout=", got)
+        self.assertIn("R10.9 Timeouts on fetch and axios", got)
+
+    def test_a_reworded_title_is_accepted_only_against_the_line_the_release_recorded(self):
+        got = py("old = 'Old: promises more'\n"
+                 "s.REWORDED['R1.1'] = old\n"
+                 "ok = s.problems({'R1.1': {'title': old, 'status': 'stable'}}, {'R1.1': {'title': 'New: what it checks', 'status': 'stable'}})\n"
+                 "other = s.problems({'R1.1': {'title': 'Third: another line', 'status': 'stable'}}, {'R1.1': {'title': 'New: what it checks', 'status': 'stable'}})\n"
+                 "print(json.dumps({'ok': ok, 'other': other}))")
+        self.assertEqual(got["ok"], [])
+        self.assertEqual(len(got["other"]), 1)
+        self.assertIn("reused with another meaning", got["other"][0])
 
     def test_a_broken_id_file_is_refused(self):
         got = py("import os, tempfile\n"
@@ -156,7 +200,7 @@ class TestStatusAtScanTime(unittest.TestCase):
             with open(os.path.join(d, "popup.test.ts"), "w", encoding="utf-8") as fh:
                 fh.write("await page.waitForTimeout(500);\nexpect(popups).toHaveLength(0);\n")
             res = subprocess.run([sys.executable, "-I", "-c", _CLI, TREE, "scan", "--fail-on", "all"], cwd=d,
-                                 capture_output=True, text=True, timeout=60)
+                                 capture_output=True, encoding="utf-8", timeout=60)
         self.assertEqual(res.returncode, 0, res.stderr)
         self.assertIn("popup.test.ts:1: [R6.3]", res.stdout)
         self.assertEqual(py("print(json.dumps(s.current()['R6.3']['status']))"), "preview")

@@ -1,7 +1,8 @@
 """``brevio-core mcp``: a real stdio session against the tree, in a clean interpreter with only that tree on its path.
 
 Standard library only: the exporter copies this file beside the code (the 0.2 set) and it runs unchanged there. In the
-harness the test first exports the 0.2 set and runs against that copy.
+harness the test first exports the newest set (0.6, which holds every earlier one, so the tools of each set are served
+and checked) and runs against that copy.
 """
 import json
 import os
@@ -10,6 +11,8 @@ import subprocess
 import sys
 import tempfile
 import unittest
+
+import tests.pipeline.core_export.test_core_portable as portable
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
@@ -24,15 +27,15 @@ _SERVE = ("import sys; sys.path.insert(0, sys.argv[1]); from brevio.pipeline imp
           "raise SystemExit(code)")
 LIST, CALL = "tools" + "/list", "tools" + "/call"     # joined: the leak scan reads a literal "tools" + "/" as a private folder
 _BIN = tempfile.TemporaryDirectory()    # a PATH holding git and nothing else
+_PATH = portable.git_only_path(_BIN.name)
 _EXPORT = tempfile.TemporaryDirectory()
 
 
 def setUpModule():
     global TREE
-    os.symlink(shutil.which("git"), os.path.join(_BIN.name, "git"))
     if os.path.isfile(EXPORTER):
         out = os.path.join(_EXPORT.name, "core")
-        subprocess.run([sys.executable, EXPORTER, "--out", out, "--set", "0.2"], check=True, capture_output=True, timeout=120)
+        subprocess.run([sys.executable, EXPORTER, "--out", out, "--set", "0.6"], check=True, capture_output=True, timeout=120)
         TREE = out
 
 
@@ -44,8 +47,8 @@ def tearDownModule():
 def session(cwd, *messages):
     """Send each message (a dict, or a raw line) on stdin of ``brevio-core mcp``; return the replies, stderr and the exit code."""
     lines = "".join((m if isinstance(m, str) else json.dumps(m)) + "\n" for m in messages)
-    res = subprocess.run([sys.executable, "-I", "-c", _SERVE, TREE], cwd=cwd, input=lines, capture_output=True, text=True,
-                         timeout=60, env={"PATH": _BIN.name})
+    res = subprocess.run([sys.executable, "-I", "-c", _SERVE, TREE], cwd=cwd, input=lines, capture_output=True, encoding="utf-8",
+                         timeout=60, env=portable.child_env(_PATH))
     return [json.loads(ln) for ln in res.stdout.splitlines()], res.stderr, res.returncode
 
 
@@ -71,7 +74,7 @@ def write(d, rel, text):
 
 
 def git(d, *args):
-    subprocess.run(["git", "-C", d, "-c", "user.name=t", "-c", "user.email=t@example.com", *args], check=True, capture_output=True)
+    subprocess.run(["git", "-C", d, "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false", *args], check=True, capture_output=True)
 
 
 class TestProtocol(unittest.TestCase):
@@ -94,11 +97,13 @@ class TestProtocol(unittest.TestCase):
         has_aeo = os.path.isfile(os.path.join(TREE, "brevio", "pipeline", "core_aeo.py"))
         has_map = os.path.isfile(os.path.join(TREE, "brevio", "pipeline", "core_map.py"))
         has_heal = os.path.isfile(os.path.join(TREE, "brevio", "pipeline", "core_heal.py"))
+        has_patch = os.path.isfile(os.path.join(TREE, "brevio", "pipeline", "core_patch.py"))           # the 0.6 set adds verify_edit and finding_packet
         expected_tools = sorted([
             *(['aeo'] if has_aeo else []),
             *(['brief'] if has_brief else []),
             *(['check'] if has_check else []),
             "explain",
+            *(['finding_packet', 'verify_edit'] if has_patch else []),
             *(["fix"] if has_fix else []),
             *(['heal'] if has_heal else []),
             "learn",
@@ -122,6 +127,41 @@ class TestProtocol(unittest.TestCase):
                 self.assertTrue(isinstance(prop.get("description"), str) and prop["description"])
         self.assertTrue(tools["scan"]["annotations"]["readOnlyHint"])
         self.assertFalse(tools["learn"]["annotations"]["readOnlyHint"])
+        for name in ("verify_edit", "finding_packet"):      # they only read: nothing is written, nothing is sent
+            if has_patch:
+                self.assertTrue(tools[name]["annotations"]["readOnlyHint"])
+
+    def test_server_info_names_the_package_version_when_a_release_stamped_it(self):
+        """D5 (MCP half, 2026-11-13): ``serverInfo.version`` was the tool-set number (0.4), not the package's."""
+        init_module = os.path.join(TREE, "brevio", "pipeline", "core_init.py")
+        if not os.path.isfile(init_module):
+            self.skipTest("this build has no core_init, so no release version")
+        with tempfile.TemporaryDirectory() as copy, tempfile.TemporaryDirectory() as d:
+            tree = os.path.join(copy, "core")
+            shutil.copytree(TREE, tree, ignore=shutil.ignore_patterns("__pycache__"))
+            write(tree, "VERSION", "7.8.9\n")
+            write(tree, "pyproject.toml", '[project]\nname = "brevio-core"\n\n[project.urls]\nSource = "https://brevio.pro/acme/brevio-core"\n')
+            lines = json.dumps(rpc(1, "initialize", {"protocolVersion": "2025-06-18"})) + "\n"
+            res = subprocess.run([sys.executable, "-I", "-c", _SERVE, tree], cwd=d, input=lines, capture_output=True,
+                                 encoding="utf-8", timeout=60, env=portable.child_env(_PATH))
+        self.assertEqual(json.loads(res.stdout)["result"]["serverInfo"], {"name": "brevio-core", "version": "7.8.9"})
+
+    def test_a_tool_call_with_an_argument_the_schema_does_not_name_is_an_error_that_names_the_near_one(self):
+        """D6 (2026-11-13): ``{"diff": "HEAD"}`` was dropped and the whole change was scanned."""
+        with tempfile.TemporaryDirectory() as d:
+            git(d, "init", "-q", "-b", "main")
+            write(d, "a.ts", CLEAN_LINE)
+            git(d, "add", "-A")
+            git(d, "commit", "-q", "-m", "base")
+            write(d, "a.ts", CLEAN_LINE + AWS_EXAMPLE_LINE)
+            replies, _err, _code = session(d, call(1, "scan", diff="HEAD"), call(2, "scan", diff_base="HEAD"),
+                                           call(3, "scan", paths=["a.ts"], colour="red"))
+        bad, good, other = (r["result"] for r in replies)
+        self.assertTrue(bad["isError"])
+        self.assertEqual(bad["content"][0]["text"], "unknown argument: diff (did you mean diff_base?)")
+        self.assertFalse(good["isError"])
+        self.assertIn("a.ts:2 [R13.1]", good["content"][0]["text"])
+        self.assertEqual((other["isError"], other["content"][0]["text"]), (True, "unknown argument: colour"))
 
     def test_an_unknown_client_version_gets_the_newest_one_this_server_speaks(self):
         with tempfile.TemporaryDirectory() as d:
@@ -149,8 +189,8 @@ class TestProtocol(unittest.TestCase):
 
     def test_arguments_to_the_command_are_refused(self):
         with tempfile.TemporaryDirectory() as d:
-            res = subprocess.run([sys.executable, "-I", "-c", _SERVE, TREE, "extra"], cwd=d, capture_output=True, text=True,
-                                 timeout=60, input="", env={"PATH": _BIN.name})
+            res = subprocess.run([sys.executable, "-I", "-c", _SERVE, TREE, "extra"], cwd=d, capture_output=True, encoding="utf-8",
+                                 timeout=60, input="", env=portable.child_env(_PATH))
         self.assertEqual(res.returncode, 2)
         self.assertEqual(res.stdout, "")
 
@@ -217,6 +257,20 @@ class TestProtocol(unittest.TestCase):
                 self.assertFalse(replies[0]["result"]["isError"])
 
 
+class TestAPathOnAnotherDrive(unittest.TestCase):
+    def test_a_path_that_shares_no_root_with_the_folder_is_outside_it_not_a_crash(self):
+        """On Windows ``os.path.commonpath`` raises ``ValueError`` for two drives; the tool must answer "outside"."""
+        script = ("import os, sys; sys.path.insert(0, sys.argv[1])\n"
+                  "from brevio.operator import mcp_cmd\n"
+                  "def other_drive(paths):\n    raise ValueError(\"Paths don't have the same drive\")\n"
+                  "os.path.commonpath = other_drive\n"
+                  "print(mcp_cmd._inside_folder('x.ts'))\n")
+        with tempfile.TemporaryDirectory() as d:
+            res = subprocess.run([sys.executable, "-I", "-c", script, TREE], cwd=d, capture_output=True, encoding="utf-8",
+                                 timeout=60, env=portable.child_env(_PATH))
+        self.assertEqual((res.returncode, res.stdout.strip()), (0, "False"), res.stderr)
+
+
 class TestScanTool(unittest.TestCase):
     def test_a_planted_secret_comes_back_as_a_finding_and_a_clean_file_does_not(self):
         with tempfile.TemporaryDirectory() as d:
@@ -273,6 +327,37 @@ class TestScanTool(unittest.TestCase):
         self.assertEqual(text[-2:], ["+230 more", "250 finding(s) in 1 file(s)"])
 
 
+class TestScoreSurfaceAgreesWithTheCommand(unittest.TestCase):
+    """D36 (2026-11-13): the ``score`` tool and ``brevio://scorecard`` say what ``score`` prints: findings counted by rule, no
+    score or grade."""
+
+    def test_the_tool_text_and_the_resource_are_what_score_prints(self):
+        if not os.path.isfile(os.path.join(TREE, "brevio", "pipeline", "core_score.py")):
+            return      # a build without the 0.6 set has no ``score``, so no tool and no resource to compare
+        with tempfile.TemporaryDirectory() as d:
+            write(d, "a.ts", AWS_EXAMPLE_LINE)
+            cli = subprocess.run([sys.executable, "-I", "-c", "import sys; sys.path.insert(0, sys.argv[1]); from brevio.pipeline import core_cli; "
+                                  "raise SystemExit(core_cli.main(sys.argv[2:]))", TREE, "score", "--no-upgrade-line"],
+                                 cwd=d, capture_output=True, encoding="utf-8", timeout=60, env=portable.child_env(_PATH))
+            cli_json = subprocess.run([sys.executable, "-I", "-c", "import sys; sys.path.insert(0, sys.argv[1]); from brevio.pipeline import core_cli; "
+                                       "raise SystemExit(core_cli.main(sys.argv[2:]))", TREE, "score", "--json"],
+                                      cwd=d, capture_output=True, encoding="utf-8", timeout=60, env=portable.child_env(_PATH))
+            replies, _err, code = session(d, rpc(1, LIST), call(2, "score"), rpc(3, "resources/read", {"uri": "brevio://scorecard"}),
+                                          rpc(4, "resources/list"))
+        self.assertEqual(code, 0)
+        tool = next(t for t in replies[0]["result"]["tools"] if t["name"] == "score")
+        text = replies[1]["result"]["content"][0]["text"]
+        self.assertEqual(text.strip(), cli.stdout.strip())
+        self.assertIn("score (preview)", text)
+        self.assertNotRegex(text + tool["description"], r"(?i)\bgrade\b|\bbadge\b|/100")
+        self.assertIn("count the findings", tool["description"])
+        card = json.loads(replies[2]["result"]["contents"][0]["text"])
+        self.assertEqual(card, json.loads(cli_json.stdout))
+        listed = next(r for r in replies[3]["result"]["resources"] if r["uri"] == "brevio://scorecard")
+        self.assertIn("counted by rule", listed["description"])
+        self.assertNotIn("grade", listed["description"].lower())
+
+
 class TestRuleTools(unittest.TestCase):
     def test_explain_returns_the_rule_page_for_an_id_in_any_case(self):
         with tempfile.TemporaryDirectory() as d:
@@ -325,3 +410,80 @@ class TestLearnTool(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipUnless(os.path.isfile(os.path.join(ROOT, "brevio", "pipeline", "core_patch.py")), "the 0.6 set ships the edit tools")
+class TestEditTools(unittest.TestCase):
+    """``verify_edit`` and ``finding_packet`` (2026-11-11): the verdict of ``patch --dry-run`` and a finding's context."""
+
+    SEARCH, MID, REPLACE = "<<<<<<< SEARCH", "=======", ">>>>>>> REPLACE"
+
+    def block(self, path, old, new):
+        return f"{path}\n{self.SEARCH}\n{old}\n{self.MID}\n{new}\n{self.REPLACE}\n"
+
+    def test_a_clean_edit_is_accepted_and_nothing_is_written(self):
+        with tempfile.TemporaryDirectory() as d:
+            write(d, "src/a.ts", "export const a = 1;\n")
+            replies, _err, code = session(d, call(1, "verify_edit", patch=self.block("src/a.ts", "export const a = 1;", "export const a = 2;")))
+            with open(os.path.join(d, "src", "a.ts"), encoding="utf-8") as fh:
+                after = fh.read()
+        res = replies[0]["result"]
+        self.assertEqual(code, 0)
+        self.assertFalse(res["isError"])
+        self.assertEqual((res["structuredContent"]["ok"], res["structuredContent"]["files"]), (True, ["src/a.ts"]))
+        self.assertTrue(res["content"][0]["text"].startswith("accepted: src/a.ts"))
+        self.assertEqual(after, "export const a = 1;\n")
+
+    def test_an_edit_that_plants_a_secret_or_a_suppression_or_touches_the_config_is_refused_with_reasons(self):
+        with tempfile.TemporaryDirectory() as d:
+            write(d, "src/a.ts", "export const a = 1;\n")
+            write(d, "brevio-core.toml", "")
+            replies, _err, _code = session(
+                d, call(1, "verify_edit", patch=self.block("src/a.ts", "export const a = 1;", AWS_EXAMPLE_LINE.strip() + " // brevio-core: ignore R13.1 -- test")),
+                call(2, "verify_edit", patch=self.block("brevio-core.toml", "", 'ignore = ["R13.1"]')),
+                call(3, "verify_edit", patch=self.block("a.ts", "x", "y")))
+        planted, config, missing = (r["result"] for r in replies)
+        self.assertFalse(planted["isError"])         # a refusal is the answer, not a failure of the tool
+        self.assertFalse(planted["structuredContent"]["ok"])
+        self.assertTrue(any("[R13.1]" in r for r in planted["structuredContent"]["reasons"]))
+        self.assertTrue(any("[suppression]" in r for r in planted["structuredContent"]["reasons"]))
+        self.assertTrue(any("protected" in r for r in config["structuredContent"]["reasons"]))
+        self.assertFalse(missing["structuredContent"]["ok"])
+
+    def test_a_block_with_no_file_takes_the_path_argument_and_a_bad_argument_is_an_error_result(self):
+        with tempfile.TemporaryDirectory() as d:
+            write(d, "a.ts", "export const a = 1;\n")
+            bare = f"{self.SEARCH}\nexport const a = 1;\n{self.MID}\nexport const a = 2;\n{self.REPLACE}\n"
+            replies, _err, _code = session(d, call(1, "verify_edit", patch=bare, path="a.ts"), call(2, "verify_edit", patch=5))
+        self.assertTrue(replies[0]["result"]["structuredContent"]["ok"])
+        self.assertTrue(replies[1]["result"]["isError"])
+
+    def test_the_packet_of_a_finding_has_the_rule_text_the_line_its_context_and_the_extension(self):
+        with tempfile.TemporaryDirectory() as d:
+            write(d, "src/bad.ts", "a\nb\n" + AWS_EXAMPLE_LINE + "c\n")
+            replies, _err, _code = session(d, call(1, "finding_packet", finding="src/bad.ts:3 [R13.1] a secret", context=1),
+                                           call(2, "finding_packet", finding="src/bad.ts:3: [R13.1] a secret"))
+        res = replies[0]["result"]
+        packet = res["structuredContent"]
+        self.assertFalse(res["isError"])
+        self.assertEqual((packet["rule"], packet["line"], packet["extension"], packet["before"], packet["after"]), ("R13.1", 3, ".ts", ["b"], ["c"]))
+        self.assertTrue(packet["why"] and packet["good"])
+        self.assertIn("> 3 |", res["content"][0]["text"])
+        self.assertEqual(replies[1]["result"]["structuredContent"]["before"], [])     # the scan format reads the same, with no context
+        self.assertEqual(replies[1]["result"]["structuredContent"]["rule"], "R13.1")
+
+    def test_a_packet_for_a_secrets_file_a_missing_line_or_a_path_outside_is_an_error_result(self):
+        with tempfile.TemporaryDirectory() as d, tempfile.TemporaryDirectory() as other:
+            write(d, ".env", "KEY=1\n")
+            write(d, "a.ts", "x\n")
+            write(other, "x.ts", "x\n")
+            findings = [".env:1 [R13.1] x", "a.ts:9 [R9.2] x", f"{other}/x.ts:1 [R9.2] x", "nonsense"]
+            replies, _err, _code = session(d, *[call(i, "finding_packet", finding=f) for i, f in enumerate(findings, 1)])
+        self.assertEqual([r["result"]["isError"] for r in replies], [True] * 4)
+
+    def test_the_edit_tools_run_with_every_socket_refused_and_send_nothing(self):
+        with tempfile.TemporaryDirectory() as d:
+            write(d, "a.ts", "x\n")
+            _replies, err, code = session(d, call(1, "verify_edit", patch=self.block("a.ts", "x", "y")), call(2, "finding_packet", finding="a.ts:1 [R9.2] x"))
+        self.assertEqual(code, 0)
+        self.assertEqual(err, "NET:")

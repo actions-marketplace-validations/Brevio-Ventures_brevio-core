@@ -1,7 +1,7 @@
 # Agent-safe starter
 
 A starting point for a repository where coding agents write code. It catches the mistakes coding agents repeat before
-they merge, with brevio-core 0.9.1: no model call and no API key.
+they merge, with brevio-core 0.10.0: no model call and no API key.
 
 ## What is in it
 
@@ -18,7 +18,7 @@ leaves it alone.
 Press "Use this template" on GitHub, or copy the two files into an existing repository. Then, on your machine:
 
 ```sh
-pip install brevio-core==0.9.1
+pip install brevio-core==0.10.0
 brevio-core init --with hook,mcp
 ```
 
@@ -28,7 +28,7 @@ for the coding agents it finds, and a baseline once there is code. See the
 
 ## Keep it pinned
 
-The workflow names exact versions. To update, change `v0.9.1` and `package-version` together, or let Dependabot's
+The workflow names exact versions. To update, change `v0.10.0` and `package-version` together, or let Dependabot's
 `github-actions` updates do it. To pin the Action to a commit instead of a tag, see the
 [Action guide](https://brevio-ventures.github.io/brevio-core/action/).
 

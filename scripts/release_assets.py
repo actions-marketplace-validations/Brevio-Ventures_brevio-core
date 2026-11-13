@@ -7,8 +7,9 @@ Run from the repository root after the wheel is installed into a folder (``pip i
 
 It writes into ``--out``:
 
-- ``brevio-core.pyz``: the installed package as a zip application, run with any ``python3`` 3.10 or newer. The entries
-  are sorted, stored uncompressed and carry a fixed timestamp and mode, so the same package gives the same bytes.
+- ``brevio-core.pyz``: the installed package as a zip application, run with any ``python3`` 3.10 or newer. It holds the
+  ``VERSION`` file, so ``--version`` and the MCP server can say the version. The entries are sorted, stored uncompressed
+  and carry a fixed timestamp and mode, so the same package gives the same bytes.
 - ``brevio-core.cdx.json``: a CycloneDX SBOM. The package has no runtime dependency, so it lists no component.
 - ``notes.md``: ``RELEASE.md`` plus the release commit, the SHA-256 of the ``.pyz`` (and of the PyPI files, with
   ``--dist``) and how to verify it.
@@ -58,12 +59,13 @@ def _entry(name: str) -> zipfile.ZipInfo:
     return info
 
 
-def build_pyz(source: str, target: str) -> str:
-    """Write the zip application of the package under ``source`` to ``target``; return its SHA-256."""
+def build_pyz(source: str, target: str, version: str) -> str:
+    """Write the zip application of the package under ``source`` and its ``VERSION`` to ``target``; return its SHA-256."""
     with open(target, "wb") as fh:
         fh.write(SHEBANG)
         with zipfile.ZipFile(fh, "w") as z:
             z.writestr(_entry("__main__.py"), MAIN)
+            z.writestr(_entry("VERSION"), version.strip() + "\n")
             for name in package_files(source):
                 with open(os.path.join(source, *name.split("/")), "rb") as src:
                     z.writestr(_entry(name), src.read())
@@ -157,7 +159,7 @@ def make(root: str, source: str, out: str, commit: str, repo: str, dist: str | N
         raise SystemExit(f"--commit must be a full commit SHA, got {commit!r}")
     version = _read(os.path.join(root, "VERSION")).strip()
     os.makedirs(out, exist_ok=True)
-    pyz_sha = build_pyz(source, os.path.join(out, PYZ))
+    pyz_sha = build_pyz(source, os.path.join(out, PYZ), version)
     dist_shas = {n: sha256(os.path.join(dist, n)) for n in os.listdir(dist)} if dist else {}
     _write(os.path.join(out, SBOM), json.dumps(sbom(version, commit, pyz_sha), indent=2) + "\n")
     _write(os.path.join(out, "notes.md"),

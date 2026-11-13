@@ -39,7 +39,9 @@ LEVELS = ("warn", "error")
 DEFAULT_LEVEL = "error"
 MAX_EXTENDS = 8
 CHANGE_MESSAGE = "config change: it can turn rules off or down, so it needs a human review"
-_TOP_KEYS = frozenset({"extends", "select", "ignore", "exclude", "level", "rules", "overrides"})
+# ``ai`` is the narrowing table of ``brevio-core ai`` (2026-11-11): the gate ignores it, and only that command reads and
+# checks it, so a file that holds one still loads for ``scan`` and the hook.
+_TOP_KEYS = frozenset({"extends", "select", "ignore", "exclude", "level", "rules", "overrides", "ai"})
 _OVERRIDE_KEYS = frozenset({"paths", "ignore", "rules", "level"})
 _PIN = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
 _URL = re.compile(r"^(?:[A-Za-z][A-Za-z0-9+.-]*://|[\w.-]+@[\w.-]+:)")      # scheme://... or user@host:path
@@ -57,7 +59,7 @@ _ESCAPES = {'"': '"', "\\": "\\", "n": "\n", "t": "\t"}
 
 class _Reader:
     """A cursor over the text, with the few TOML forms the keys need: comments, ``[table]``, ``[[array]]``, bare and
-    quoted keys, dotted keys, strings and arrays of strings."""
+    quoted keys, dotted keys, strings, arrays of strings and ``true`` or ``false`` (``enabled`` of the ``ai`` table)."""
 
     def __init__(self, text: str) -> None:
         self.text, self.pos = text, 0
@@ -133,12 +135,16 @@ class _Reader:
                 return out
             self.pos += 1
 
-    def value(self) -> str | list[str]:
+    def value(self) -> str | bool | list[str]:
         self.skip(False)
         if self.at('"') or self.at("'"):
             return self.string()
+        for word in ("true", "false"):
+            if self.at(word):
+                self.pos += len(word)
+                return word == "true"
         if not self.at("["):
-            raise self.fail("a value here is a string or a list of strings")
+            raise self.fail("a value here is a string or a list of strings (or true or false)")
         self.pos += 1
         items: list[str] = []
         while True:
@@ -352,11 +358,12 @@ class PathConfig(NamedTuple):
     def runs(self, rule: str) -> bool:
         return any(rule_matches(rule, p) for p in self.select) and not any(rule_matches(rule, p) for p in self.ignore)
 
-    def level(self, rule: str) -> str:
+    def level(self, rule: str, default: str = DEFAULT_LEVEL) -> str:
+        """The level the nearest setting gives ``rule``; ``default`` when none names it (a learned guard's is ``warn``)."""
         for patterns, level in reversed(self.levels):
             if any(rule_matches(rule, p) for p in patterns):
                 return level
-        return DEFAULT_LEVEL
+        return default
 
 
 def resolve(layers: list[Layer], path: str) -> PathConfig:
@@ -408,7 +415,8 @@ def submodule_path(root: str, url: str) -> str | None:
 def checkout_head(folder: str) -> str:
     """The commit the git checkout holding ``folder`` is at, or "" when there is none."""
     try:
-        r = subprocess.run([*GIT, "-C", folder, "rev-parse", "HEAD"], capture_output=True, text=True, timeout=30)
+        r = subprocess.run([*GIT, "-C", folder, "rev-parse", "HEAD"],
+                           capture_output=True, encoding="utf-8", errors="replace", timeout=30)
     except (OSError, subprocess.SubprocessError):
         return ""
     return r.stdout.strip() if r.returncode == 0 else ""

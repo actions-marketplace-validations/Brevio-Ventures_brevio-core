@@ -83,12 +83,12 @@ def tearDownModule():
 
 
 def run_cli(cwd, *args, reader="tomllib"):
-    return subprocess.run([sys.executable, "-I", "-c", _RUN, TREE, reader, *args], cwd=cwd, capture_output=True, text=True,
+    return subprocess.run([sys.executable, "-I", "-c", _RUN, TREE, reader, *args], cwd=cwd, capture_output=True, encoding="utf-8",
                           timeout=60)
 
 
 def parsed(text):
-    res = subprocess.run([sys.executable, "-I", "-c", _PARSE, TREE], input=text, capture_output=True, text=True, timeout=60)
+    res = subprocess.run([sys.executable, "-I", "-c", _PARSE, TREE], input=text, capture_output=True, encoding="utf-8", timeout=60)
     assert res.returncode == 0, res.stderr
     return json.loads(res.stdout)
 
@@ -107,7 +107,7 @@ def read(d, rel):
 
 def git(d, *args):
     return subprocess.run(["git", "-C", d, "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false",
-                           *args], check=True, capture_output=True, text=True, timeout=60).stdout.strip()
+                           *args], check=True, capture_output=True, encoding="utf-8", timeout=60).stdout.strip()
 
 
 def config_of(d, path, reader="tomllib"):

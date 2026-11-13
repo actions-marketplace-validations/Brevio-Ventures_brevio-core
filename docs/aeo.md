@@ -30,7 +30,6 @@ brevio-core aeo out/pricing.html --format json
 2. Put the site's `robots.txt` and `llms.txt` beside it.
 3. Run `brevio-core aeo` on that folder.
 
-To score a live URL without saving it, use the hosted check on [brevio.pro](https://brevio.pro).
 
 ## The scorecard
 
@@ -61,6 +60,6 @@ Run it after the build step, on the build output:
 
 ```yaml
       - run: npm run build
-      - run: pip install brevio-core==0.9.1
+      - run: pip install brevio-core==0.10.0
       - run: brevio-core aeo out/ --min 75 --format markdown >> "$GITHUB_STEP_SUMMARY"
 ```

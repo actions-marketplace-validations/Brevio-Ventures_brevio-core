@@ -46,7 +46,7 @@ def tearDownModule():
 
 
 def run(cwd, *args):
-    return subprocess.run([sys.executable, "-I", "-c", _RUN, TREE, "aeo", *args], cwd=cwd, capture_output=True, text=True,
+    return subprocess.run([sys.executable, "-I", "-c", _RUN, TREE, "aeo", *args], cwd=cwd, capture_output=True, encoding="utf-8",
                           timeout=60)
 
 
@@ -81,10 +81,31 @@ class TestTheScorecard(unittest.TestCase):
         self.assertLess(low["score"], high["score"])
         self.assertEqual(out["lowest"], low["score"])
         self.assertIn("client-only JS hydration wall (<120 chars visible SSR text)", low["gaps"])
-        self.assertEqual(set(high["pillars"]), {"discovery", "structure", "token_economics", "capability", "ux_bridge"})
+        # Changed on purpose (D4, 2026-11-13): the fifth pillar, a hand-off link on one product's funnel, is not scored.
+        self.assertEqual(set(high["pillars"]), {"discovery", "structure", "token_economics", "capability"})
         self.assertTrue(out["ok"])
         self.assertEqual(out["site"], {"robots_txt": True, "blocked_bots": [], "llms_txt": True, "skill_md": False,
                                        "agent_card": False})
+
+    def test_no_advice_for_a_product_funnel_is_printed_or_scored(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = site(d)
+            write(d, "site/bare/index.html", "<html><body>hi</body></html>")
+            text = run(d, root).stdout
+            out = card(d, root)[1]
+            with_link = next(p for p in out["pages"] if p["path"] == "guide.html")
+            write(d, "site/guide.html", RICH.replace('<a href="/geo-audit?domain=x">check</a>', ""))
+            without_link = next(p for p in card(d, root)[1]["pages"] if p["path"] == "guide.html")
+        for word in ("UX Bridge", "geo-audit", "claim-audit", "teardown", "deep-link"):
+            self.assertNotIn(word, text)
+        self.assertEqual(with_link["score"], without_link["score"])
+        self.assertLessEqual(with_link["score"], 100)
+
+    def test_the_four_pillars_are_scaled_from_90_points_to_100(self):
+        with tempfile.TemporaryDirectory() as d:
+            out = card(d, site(d))[1]
+        for page in out["pages"]:
+            self.assertEqual(page["score"], round(100 * sum(page["pillars"].values()) / 90), page)
 
     def test_a_page_below_the_minimum_fails_the_run_and_is_named(self):
         with tempfile.TemporaryDirectory() as d:
@@ -148,13 +169,17 @@ class TestTheScorecard(unittest.TestCase):
     def test_the_markdown_report_is_a_table_and_escapes_a_hostile_file_name(self):
         with tempfile.TemporaryDirectory() as d:
             root = site(d)
-            write(d, "site/@team <b>.html", RICH)
+            # Windows allows neither < nor > in a name, so there the name carries a link instead of a tag.
+            write(d, "site/@team [b](x).html" if os.name == "nt" else "site/@team <b>.html", RICH)
             res = run(d, root, "--format", "markdown")
         self.assertEqual(res.returncode, 0, res.stderr)
         self.assertIn("| Page | Score | Grade | Gaps |", res.stdout)
         self.assertNotIn("@team", res.stdout)
-        self.assertNotIn("<b>", res.stdout)
-        self.assertIn("&lt;b&gt;", res.stdout)
+        if os.name == "nt":
+            self.assertNotIn("[b](x)", res.stdout)
+        else:
+            self.assertNotIn("<b>", res.stdout)
+            self.assertIn("&lt;b&gt;", res.stdout)
 
 
 class TestWhatItRefuses(unittest.TestCase):
@@ -166,7 +191,7 @@ class TestWhatItRefuses(unittest.TestCase):
                 self.assertEqual(res.stdout, "")
                 self.assertIn("reads local files only", res.stderr)
                 self.assertIn("Save the built page first", res.stderr)
-                self.assertIn("brevio.pro", res.stderr)
+                self.assertNotIn("brevio.pro", res.stderr)      # no link to a hosted check: no such page is shown in this repository (2026-11-12)
                 self.assertNotIn("NETWORK-USED", res.stderr)
 
     def test_a_missing_path_a_folder_without_pages_and_a_bad_minimum_are_usage_errors(self):
@@ -188,7 +213,7 @@ class TestWhatItRefuses(unittest.TestCase):
         self.assertEqual(len(out["pages"]), 1)
 
     def test_the_command_is_listed_in_the_help(self):
-        res = subprocess.run([sys.executable, "-I", "-c", _RUN, TREE, "--help"], capture_output=True, text=True, timeout=60)
+        res = subprocess.run([sys.executable, "-I", "-c", _RUN, TREE, "help", "--all"], capture_output=True, encoding="utf-8", timeout=60)
         self.assertIn("aeo", res.stdout)
 
 
@@ -205,7 +230,7 @@ class TestGenerateLLMs(unittest.TestCase):
                 "print(out)\n"
             )
             res = subprocess.run([sys.executable, "-I", "-c", "import sys; sys.path.insert(0, sys.argv[1]); " + code,
-                                  TREE, os.path.join(d, "site")], capture_output=True, text=True, check=True)
+                                  TREE, os.path.join(d, "site")], capture_output=True, encoding="utf-8", check=True)
             text = res.stdout
             self.assertIn("# Home Page\n", text)
             self.assertIn("> Home description\n", text)
@@ -222,7 +247,7 @@ class TestGenerateLLMs(unittest.TestCase):
                 "print(out)\n"
             )
             res = subprocess.run([sys.executable, "-I", "-c", "import sys; sys.path.insert(0, sys.argv[1]); " + code,
-                                  TREE, os.path.join(d, "mysite")], capture_output=True, text=True, check=True)
+                                  TREE, os.path.join(d, "mysite")], capture_output=True, encoding="utf-8", check=True)
             text = res.stdout
             self.assertIn("# mysite\n", text)
             self.assertIn("> mysite documentation and pages.\n", text)
@@ -270,7 +295,7 @@ class TestGenerateLLMs(unittest.TestCase):
                 "print(out)\n"
             )
             res_file = subprocess.run([sys.executable, "-I", "-c", "import sys; sys.path.insert(0, sys.argv[1]); " + code_file,
-                                       TREE, file_path], capture_output=True, text=True, check=True)
+                                       TREE, file_path], capture_output=True, encoding="utf-8", check=True)
             self.assertIn("# File Page", res_file.stdout)
             self.assertRegex(res_file.stdout, r"- \[File Page\]\(/index\.html\) \(~\d+ tokens\): File desc")
             self.assertTrue(os.path.isfile(os.path.join(d, "file_site", "llms.txt")))
@@ -284,7 +309,7 @@ class TestGenerateLLMs(unittest.TestCase):
                 "print(out)\n"
             )
             res_dir = subprocess.run([sys.executable, "-I", "-c", "import sys; sys.path.insert(0, sys.argv[1]); " + code_dir,
-                                      TREE, dir_path], capture_output=True, text=True, check=True)
+                                      TREE, dir_path], capture_output=True, encoding="utf-8", check=True)
             self.assertRegex(res_dir.stdout, r"- \[Dir Page\]\(/page\.html\) \(~\d+ tokens\): Dir desc")
             self.assertTrue(os.path.isfile(os.path.join(d, "dir_site", "llms.txt")))
 
@@ -312,7 +337,7 @@ class TestGenerateLLMs(unittest.TestCase):
                 "sys.exit(exit_code)\n"
             )
             res_main = subprocess.run([sys.executable, "-I", "-c", "import sys; sys.path.insert(0, sys.argv[1]); " + code_main,
-                                       TREE, d], capture_output=True, text=True)
+                                       TREE, d], capture_output=True, encoding="utf-8")
             self.assertEqual(res_main.returncode, 0, res_main.stderr)
             self.assertIn("Wrote ", res_main.stdout)
 

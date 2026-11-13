@@ -349,5 +349,40 @@ class TestCoreMap(unittest.TestCase):
             self.assertEqual(parsed["ranked_files"][0]["file"], "src/auth.py")
 
 
+    def test_the_repo_map_skips_nested_checkouts_and_vendored_and_virtualenv_folders(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            def put(name: str, text: str) -> None:
+                path = os.path.join(d, name)
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                with open(path, "w", encoding="utf-8") as fh:
+                    fh.write(text)
+            clean = "def add(a: int, b: int) -> int:\n    return a + b\n"
+            put("app.py", clean)
+            put(os.path.join("src", "mod.py"), clean)
+            put(os.path.join(".claude", "worktrees", "w1", ".git"), "gitdir: elsewhere\n")   # a worktree holds a .git file
+            put(os.path.join(".claude", "worktrees", "w1", "copy.py"), clean)
+            put(os.path.join("clone", ".git", "HEAD"), "ref: refs/heads/main\n")             # a clone holds a .git folder
+            put(os.path.join("clone", "copy.py"), clean)
+            put(os.path.join("vendor", "lib.py"), clean)
+            put(os.path.join(".venv", "lib", "site.py"), clean)
+            put(os.path.join("node_modules", "pkg", "index.js"), "module.exports = 1;\n")
+            mapped = core_map.build_repo_map(root=d, as_json=True)
+        self.assertNotIn("copy.py", json.dumps(mapped))
+
+    def test_the_repo_map_skips_the_agents_and_brevio_artifact_folders(self) -> None:
+        """Public pull request #11 meant the map to skip these; its change reached only the scan's skip list, and the map
+        still ranked the files of ``.agents`` and ``.brevio``."""
+        with tempfile.TemporaryDirectory() as d:
+            for name in (os.path.join("." + "agents", "skill.py"), os.path.join(".brevio", "gen.py"), "app.py"):
+                path = os.path.join(d, name)
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                with open(path, "w", encoding="utf-8") as fh:
+                    fh.write("def add(a: int, b: int) -> int:\n    return a + b\n")
+            mapped = json.dumps(core_map.build_repo_map(root=d, as_json=True))
+        self.assertIn("app.py", mapped)
+        self.assertNotIn("skill.py", mapped)
+        self.assertNotIn("gen.py", mapped)
+
+
 if __name__ == "__main__":
     unittest.main()

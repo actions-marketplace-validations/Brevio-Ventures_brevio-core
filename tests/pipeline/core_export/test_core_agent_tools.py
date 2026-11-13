@@ -13,6 +13,8 @@ import sys
 import tempfile
 import unittest
 
+import tests.pipeline.core_export.test_core_portable as portable
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
 EXPORTER = os.path.join(ROOT, "tools", "export_core.py")      # present in the harness checkout only
@@ -25,12 +27,12 @@ FIXING = "result = compute_total(items)\n"
 
 
 _BIN = tempfile.TemporaryDirectory()    # a PATH holding git and nothing else, so no coding client is found on it
+_PATH = portable.git_only_path(_BIN.name)
 _EXPORT = tempfile.TemporaryDirectory()
 
 
 def setUpModule():
     global TREE
-    os.symlink(shutil.which("git"), os.path.join(_BIN.name, "git"))
     if os.path.isfile(EXPORTER):
         out = os.path.join(_EXPORT.name, "core")
         subprocess.run([sys.executable, EXPORTER, "--out", out, "--set", "0.2"], check=True, capture_output=True, timeout=120)
@@ -44,12 +46,12 @@ def tearDownModule():
 
 def run_cli(cwd, *args, code=_RUN):
     """``brevio-core`` with ``args`` in ``cwd`` under ``python -I``, with a PATH that finds git only."""
-    return subprocess.run([sys.executable, "-I", "-c", code, TREE, *args], cwd=cwd, capture_output=True, text=True,
-                          timeout=60, env={"PATH": _BIN.name})
+    return subprocess.run([sys.executable, "-I", "-c", code, TREE, *args], cwd=cwd, capture_output=True, encoding="utf-8",
+                          timeout=60, env=portable.child_env(_PATH))
 
 
 def git(d, *args):
-    subprocess.run(["git", "-C", d, "-c", "user.name=t", "-c", "user.email=t@example.com", *args], check=True,
+    subprocess.run(["git", "-C", d, "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false", *args], check=True,
                    capture_output=True)
 
 
@@ -153,13 +155,18 @@ class TestLearnBeforeCommitting(unittest.TestCase):
             self.assertEqual(run_cli(d, "learn", "--staged", "--worktree").returncode, 2)
 
 
+def unpinned(command):
+    """``command`` without the ``==version`` pin that a build knowing its release version writes (D12, 2026-11-13)."""
+    return re.sub(r"brevio-core==\d+\.\d+\.\d+", "brevio-core", command)
+
+
 class TestHookInstall(unittest.TestCase):
     def test_a_named_agent_gets_the_hook_run_command_and_a_second_run_changes_nothing(self):
         with tempfile.TemporaryDirectory() as d:
             self.assertEqual(run_cli(d, "hook", "install", "--target", "claude_code", "--json").returncode, 0)
             first = read_json(d, ".claude/settings.json")
             hooks = first["hooks"]["PostToolUse"]
-            self.assertEqual([(g["matcher"], [h["command"] for h in g["hooks"]]) for g in hooks],
+            self.assertEqual([(g["matcher"], [unpinned(h["command"]) for h in g["hooks"]]) for g in hooks],
                              [("Edit|Write|MultiEdit", ["uvx brevio-core hook run --event post-edit"]),
                               ("Bash", ["uvx brevio-core hook run --event post-command"])])
             self.assertEqual(run_cli(d, "hook", "install", "--target", "claude_code").returncode, 0)
@@ -173,7 +180,7 @@ class TestHookInstall(unittest.TestCase):
                 json.dump(old, fh)
             self.assertEqual(run_cli(d, "hook", "install", "--target", "claude_code").returncode, 0)
             hooks = read_json(d, ".claude/settings.json")["hooks"]["PostToolUse"]
-            self.assertEqual([h["command"] for g in hooks for h in g["hooks"]],
+            self.assertEqual([unpinned(h["command"]) for g in hooks for h in g["hooks"]],
                              ["uvx brevio-core hook run --event post-edit", "uvx brevio-core hook run --event post-command"])
 
     def test_hook_run_in_a_build_without_the_runner_lets_the_agent_go_on(self):
@@ -181,7 +188,7 @@ class TestHookInstall(unittest.TestCase):
             self.skipTest("this build ships the hook runner (tests/pipeline/core_export/test_core_hook.py covers it)")
         with tempfile.TemporaryDirectory() as d:
             res = subprocess.run([sys.executable, "-I", "-c", _RUN, TREE, "hook", "run", "--event", "stop"], cwd=d, input="{}",
-                                 capture_output=True, text=True, timeout=60, env={"PATH": _BIN.name})
+                                 capture_output=True, encoding="utf-8", timeout=60, env=portable.child_env(_PATH))
             self.assertEqual((res.returncode, res.stdout), (0, ""))
             self.assertIn("no hook runner", res.stderr)
 
@@ -194,6 +201,13 @@ class TestHookInstall(unittest.TestCase):
             status = json.loads(run_cli(d, "hook", "status", "--json").stdout)
             self.assertEqual(sorted(status), ["claude_code", "cursor", "hermes", "openclaw"])
             self.assertTrue(all(status.values()))
+
+    def test_the_box_lines_it_prints_go_out_as_utf_8_through_a_pipe_with_a_legacy_code_page(self):
+        with tempfile.TemporaryDirectory() as d:
+            res = subprocess.run([sys.executable, "-I", "-c", "import sys; " + portable.LEGACY_STREAMS + _RUN, TREE,
+                                  "hook", "install", "--all"], cwd=d, capture_output=True, timeout=60, env=portable.child_env(_PATH, d))
+            self.assertEqual((res.returncode, res.stderr), (0, b""))
+            self.assertIn("\u2550".encode("utf-8"), res.stdout)
 
     def test_with_no_target_only_the_agents_found_here_are_wired(self):
         with tempfile.TemporaryDirectory() as d:
@@ -226,7 +240,9 @@ class TestGain(unittest.TestCase):
             self.assertEqual((summary["total_interceptions"], summary["savings_measured"], summary["tokens_saved"]),
                              (0, False, 0))
             text = run_cli(d, "gain").stdout
-            self.assertIn("0 defects intercepted, 0 learned guards active", text)
+            self.assertIn("Learned-guard hits recorded: 0", text)
+            self.assertIn("`learn --check` finds a guard's line", text)
+            self.assertIn("Learned guards: 0 active, 0 on trial", text)
             self.assertNotIn("saved (measured)", text)
 
     def test_a_caught_defect_is_counted_and_never_priced(self):
@@ -235,9 +251,22 @@ class TestGain(unittest.TestCase):
             write(d, "src/other.py", FIXED)
             self.assertEqual(run_cli(d, "learn", "--check", "src/other.py").returncode, 1)
             summary = json.loads(run_cli(d, "gain", "--json").stdout)
-            self.assertEqual((summary["total_interceptions"], summary["active_learned_guards"]), (1, 1))
+            # A kept guard is on trial until a person promotes it: gain no longer counts it as active (2026-11-12).
+            self.assertEqual((summary["total_interceptions"], summary["active_learned_guards"], summary["trial_learned_guards"]),
+                             (1, 0, 1))
             self.assertEqual((summary["savings_measured"], summary["tokens_saved"], summary["cost_saved_usd"]), (False, 0, 0.0))
             self.assertNotIn("saved (measured)", run_cli(d, "gain").stdout)
+
+    def test_a_hit_that_scan_reports_is_not_in_the_ledger_and_the_card_says_only_learn_check_records(self):
+        """The card said every learned-guard hit was recorded; a hit of `scan` is not (2026-11-12, review of the first-five stage)."""
+        with repo_with_a_fix() as d:
+            run_cli(d, "learn")
+            write(d, "src/other.py", FIXED)
+            self.assertIn("guard:", run_cli(d, "scan", "src/other.py").stdout)
+            card = run_cli(d, "gain")
+            summary = json.loads(run_cli(d, "gain", "--json").stdout)
+            self.assertEqual(summary["total_interceptions"], 0)
+            self.assertIn("a hit that `scan` or the agent hook reports", card.stdout)
 
     def test_an_old_ledger_that_held_an_estimate_is_not_shown_as_savings(self):
         with tempfile.TemporaryDirectory() as d:
@@ -286,6 +315,21 @@ class TestAdd(unittest.TestCase):
             with open(os.path.join(d, g["rule_file"]), encoding="utf-8") as fh:
                 rule_md = fh.read()
             self.assertIn("description: \"Learned Guard: Bad 'quote' newline\"", rule_md)
+
+    def test_add_help_shows_the_usage_of_add_and_says_that_no_name_lists_the_packs(self):
+        """``add --help`` printed the usage of ``list`` (D47, 2026-11-13); ``add NAME --help`` was already right."""
+        with tempfile.TemporaryDirectory() as d:
+            res = run_cli(d, "add", "--help")
+            self.assertEqual(res.returncode, 0)
+            self.assertIn("usage: brevio-core add [-h] [--json] pack", res.stdout)
+            self.assertIn("with no name list the packs", " ".join(res.stdout.split()))
+            self.assertIn("with no name list the packs", " ".join(run_cli(d, "pack", "add", "--help").stdout.split()))      # no "pack add" claim
+            self.assertIn("usage: brevio-core add", run_cli(d, "add", "some-pack", "-h").stdout)
+            self.assertNotIn("usage: brevio-core list", run_cli(d, "add", "-h").stdout)
+            pack_help = run_cli(d, "pack", "--help").stdout
+            self.assertIn("{list,add}", pack_help)
+            self.assertIn("usage: brevio-core pack [-h]", pack_help)      # not "brevio-core [-h] {list,add}", which names no command
+            self.assertEqual(run_cli(d, "add", "--json").returncode, 0)        # no name and no help flag still lists
 
     def test_an_unknown_pack_exits_non_zero_and_writes_nothing(self):
         with tempfile.TemporaryDirectory() as d:

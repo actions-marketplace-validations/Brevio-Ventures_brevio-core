@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "brevio-core"
-version = "0.9.1"
+version = "0.10.0"
 description = "Catches the mistakes coding agents repeat before they merge: a pull-request gate with no model call and no API key."
 readme = "README.md"
 keywords = ["coding agents", "agent mistakes", "pull request", "code review", "pre-commit", "github action",

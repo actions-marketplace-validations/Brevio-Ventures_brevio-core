@@ -2,9 +2,10 @@
 """Run the README's marked shell blocks as a test, the way a reader would follow them.
 
 A line ``<!-- readme-test -->`` directly before a fenced ``sh`` (or ``bash``) block marks it. The marked blocks run
-in order with ``bash -e -o pipefail``, each in the same folder, in two fresh git repositories:
+in order with ``bash -e -o pipefail``, each in the same folder, in two fresh git repositories, each holding one empty
+commit that ``origin/main`` names (``scan --diff origin/main`` stops when its base is not in the checkout, 0.10.0):
 
-- ``empty``: a new repository with no commit and no file. Every block must exit 0.
+- ``empty``: a new repository with no file. Every block must exit 0.
 - ``planted``: the same, but just before the first block that runs ``brevio-core scan`` a file with a hardcoded
   secret appears in it (``src/config.ts``, not committed: it is the change under review). A block that runs
   ``brevio-core scan`` may exit 1 there, and must report that file with rule R13.1. Every other block must exit 0.
@@ -75,7 +76,8 @@ def _git(repo: str, *args: str) -> None:
 
 
 def new_repo(parent: str, name: str) -> str:
-    """A fresh repository on ``main`` with a local identity, so a block may commit; nothing is committed."""
+    """A fresh repository on ``main`` with a local identity, so a block may commit, and one empty commit that ``origin/main``
+    names, so a block may diff against it; no file is committed."""
     repo = os.path.join(parent, name)
     os.makedirs(repo)
     _git(repo, "init", "-q")
@@ -83,6 +85,8 @@ def new_repo(parent: str, name: str) -> str:
     for key, value in (("user.name", "readme-test"), ("user.email", "readme-test@example.com"),
                        ("commit.gpgsign", "false"), ("core.autocrlf", "false")):
         _git(repo, "config", key, value)
+    _git(repo, "commit", "-q", "--allow-empty", "-m", "start")
+    _git(repo, "update-ref", "refs/remotes/origin/main", "HEAD")
     return repo
 
 

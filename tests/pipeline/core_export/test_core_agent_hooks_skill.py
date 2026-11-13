@@ -25,14 +25,12 @@ from brevio.pipeline.gates.agent_skill import (
 
 
 class TestAgentSkillText(unittest.TestCase):
-    def test_skill_md_references_map_heal_roast(self):
-        self.assertIn("map", SKILL_MD)
-        self.assertIn("heal", SKILL_MD)
-        self.assertIn("roast", SKILL_MD)
-        # Check command presence in body text
-        self.assertRegex(SKILL_MD, r"`map`")
-        self.assertRegex(SKILL_MD, r"`heal`")
-        self.assertRegex(SKILL_MD, r"`roast`")
+    def test_skill_md_names_no_command_that_a_trimmed_release_leaves_out(self):
+        """The first version of this test required the skill to name ``map``, ``heal`` and ``roast``. A trimmed release
+        (``--trim``) has none of them, and a skill that names a command the release lacks sends an agent to a failure, so the
+        skill names only the commands every build has (2026-11-12, improvement plan)."""
+        for name in ("map", "heal", "roast", "shield", "connect", "plan", "build", "qa", "pr", "task"):
+            self.assertNotRegex(SKILL_MD, rf"`{name}`|brevio-core {name}\b")
 
     def test_learned_guards_marker_constants(self):
         self.assertEqual(LEARNED_START, "<!-- BREVIO_LEARNED_GUARDS_START -->")

@@ -2,7 +2,7 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.Brevio-Ventures/brevio-core",
   "description": "Zero-token code rules for coding agents: scan, explain a rule, learn a guard. Local, no model call.",
-  "version": "0.9.1",
+  "version": "0.10.0",
   "repository": {
     "url": "https://github.com/Brevio-Ventures/brevio-core",
     "source": "github"
@@ -11,7 +11,7 @@
     {
       "registryType": "pypi",
       "identifier": "brevio-core",
-      "version": "0.9.1",
+      "version": "0.10.0",
       "runtimeHint": "uvx",
       "transport": {
         "type": "stdio"

@@ -7,12 +7,28 @@ permissions:
   contents: read
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # The exported suite runs on Windows as well as on Linux, and a failure there blocks (owner decision, 2026-11-13):
+    # this repository is where Windows is proven, since its Actions minutes are free. Windows runs the oldest and
+    # the newest Python the package supports.
+    name: test (${{ matrix.os }}, ${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest]
         python-version: ['3.10', '3.11', '3.12', '3.13']
+        include:
+          - os: windows-latest
+            python-version: '3.10'
+          - os: windows-latest
+            python-version: '3.13'
+    defaults:
+      run:
+        shell: bash
     steps:
+      - name: Keep line ends as committed
+        # Git for Windows checks files out with CRLF by default; this keeps them as committed, as in the export.
+        run: git config --global core.autocrlf false
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false

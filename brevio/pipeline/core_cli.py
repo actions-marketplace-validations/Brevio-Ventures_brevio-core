@@ -14,145 +14,78 @@ The 0.6 set adds ``brevio-core.toml`` (``core_config``, ROADMAP E32): which rule
 ``brevio-core config``, with ``--fail-on error`` failing on error-level findings only. A preview rule reports but never
 fails, and a deprecated rule reports nothing, in every set (ROADMAP E33, 2026-11-05). The 0.6 set also adds ``up``
 (``core_up``, ROADMAP E37): a preview of what a team sync would take, and one Teams line at the end of the Markdown
-report, which ``--no-upgrade-line`` leaves out. The agent format (hook, MCP) never carries it.
+report, which ``--no-upgrade-line`` leaves out. The agent format (hook, MCP) never carries it. The 0.6 set also adds
+``patch`` (``core_patch``, 2026-11-11): an edit is written only when the rules find the changed lines clean.
 """
 from __future__ import annotations
 
 import argparse
 import difflib
-import importlib
+import importlib.util
 import json
 import os
 import re
-import subprocess
 import sys
 from collections import Counter
 from collections.abc import Callable, Iterable
 from typing import Any
 
-from brevio.pipeline import dev_rules, leak_scan
+from brevio.pipeline import core_help, core_platform, core_sarif, core_surface, dev_rules, leak_scan
 from brevio.pipeline.code_rules import DEPRECATED, PR_RULES_122, PREVIEW, rule_status, scan_lines
 from brevio.pipeline.code_rules import docs as rule_docs
-from brevio.pipeline.code_rules.details import DETAILS, scanned_by
-from brevio.pipeline.rule_host import GIT
+from brevio.pipeline.code_rules.details import scanned_by
+from brevio.pipeline.code_rules.hints import hint as fix_hint
+from brevio.pipeline.core_diff import (  # noqa: F401  the names other modules call here (see core_diff)
+    _BUNDLE_NAME,
+    CODE_SUFFIXES,
+    LONG_LINE,
+    MAX_BYTES,
+    SKIP_DIRS,
+    VENDORED_DIRS,
+    bundled,
+    diff_lines,
+    has_head,
+    skipped,
+)
+from brevio.pipeline.core_diff import git as _git
+from brevio.pipeline.core_diff import read as _read
+from brevio.pipeline.core_diff import resolve as _base
 
-CODE_SUFFIXES = (".py", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".css", ".html", ".sql", ".vue", ".svelte")
-_AGENTS_DIR = "." + "agents"
-SKIP_DIRS = {".git", "node_modules", ".venv", "venv", "__pycache__", "dist", "build", ".next", _AGENTS_DIR, ".brevio"}
-# Code a project keeps but did not write: vendored folders, minified files and bundle chunks. Their findings are the
-# upstream's, and most of the false positives of the E35 precision run came from them (docs/benchmarks/precision.md,
-# 2026-11-05). Every scan mode skips them; a project excludes more with `exclude` in brevio-core.toml.
-VENDORED_DIRS = {"vendor", "third_party", "third-party"}
-_BUNDLE_NAME = re.compile(r"\.min\.(?:[cm]?js|css)$|\.(?:bundle|chunk)\.[cm]?js$|^chunk-[\w-]+\.[cm]?js$"
-                          r"|[.-](?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{8,}\.[cm]?js$")
-LONG_LINE = 500         # a file whose first two lines are longer than this is minified or bundled
-MAX_BYTES = 1_000_000
 AGENT_MAX = 20          # finding lines an agent is shown at once; a longer list is cut, so one reply stays short
-AGENT_HINT = 100        # characters of the rule's good example a finding line carries
 FORMATS = ("text", "markdown", "agent", "json", "github")
 # DOTALL: a file name may hold a newline, and its finding must still parse (so the Markdown report escapes it).
 _FINDING = re.compile(r"^(?P<path>.+?):(?P<line>\d+): (?:\[(?P<rule>[^\]]+)\] )?(?P<msg>.*)$", re.S)
-_HUNK = re.compile(r"^@@ -\S+ \+(\d+)")
 
 Numbered = dict[str, list[tuple[int, str]]]
 
 
-def _read(path: str) -> list[tuple[int, str]]:
-    try:
-        if os.path.getsize(path) > MAX_BYTES:
-            return []
-        with open(path, encoding="utf-8", errors="ignore") as fh:
-            return list(enumerate(fh.read().splitlines(), 1))
-    except OSError:
-        return []
-
-
-def _rel(path: str) -> str:
-    return os.path.relpath(path).replace(os.sep, "/")
+def prune_dirs(dirpath: str, dirs: Iterable[str]) -> list[str]:
+    """The sorted subfolders of ``dirpath`` a walk goes into: not a skipped, vendored or virtualenv folder, and not a nested
+    checkout (a folder holding its own ``.git``: a worktree or a clone, whose files belong to another project; 2026-11-12)."""
+    return sorted(d for d in dirs if d not in SKIP_DIRS and d not in VENDORED_DIRS
+                  and not os.path.exists(os.path.join(dirpath, d, ".git")))
 
 
 def collect_files(paths: Iterable[str]) -> Numbered:
-    """Every line of each named file, and of each code file under a named folder that is not vendored, minified or
-    bundled (a file named on the command line is read as asked)."""
+    """Every line of each named file, and of each code file under a named folder that is not vendored, minified, bundled
+    or inside a nested checkout; a file over ``MAX_BYTES`` reads as empty (a file named on the command line is read as asked)."""
     out: Numbered = {}
     for p in paths:
         if os.path.isdir(p):
             for dirpath, dirs, names in os.walk(p):
-                dirs[:] = sorted(d for d in dirs if d not in SKIP_DIRS and d not in VENDORED_DIRS)
+                dirs[:] = prune_dirs(dirpath, dirs)
                 for n in sorted(names):
-                    if n.endswith(CODE_SUFFIXES) and not _BUNDLE_NAME.search(n):
+                    if (n.endswith(CODE_SUFFIXES) or n == "package.json") and not _BUNDLE_NAME.search(n):
                         lines = _read(os.path.join(dirpath, n))
                         if not _long_head(lines):
-                            out[_rel(os.path.join(dirpath, n))] = lines
+                            out[core_platform.shown(os.path.join(dirpath, n))] = lines
         else:
-            out[_rel(p)] = _read(p)
+            out[core_platform.shown(p)] = _read(p)
     return out
 
 
 def _long_head(numbered: list[tuple[int, str]]) -> bool:
     return any(lno <= 2 and len(text) > LONG_LINE for lno, text in numbered[:2])
-
-
-def bundled(path: str) -> bool:
-    """One of the first two lines of the file on disk is longer than ``LONG_LINE``: minified or bundled output."""
-    try:
-        with open(path, encoding="utf-8", errors="ignore") as fh:
-            return any(len(fh.readline(LONG_LINE + 2).rstrip("\r\n")) > LONG_LINE for _ in range(2))
-    except OSError:
-        return False
-
-
-def _git(*args: str) -> str:
-    try:
-        r = subprocess.run([*GIT, *args], capture_output=True, text=True, timeout=120)
-    except (OSError, subprocess.SubprocessError):
-        return ""
-    return r.stdout if r.returncode == 0 else ""
-
-
-def has_head() -> bool:
-    """The current folder is a git checkout with at least one commit."""
-    return bool(_git("rev-parse", "--verify", "-q", "HEAD").strip())
-
-
-def _base(want: str) -> str:
-    for ref in ([want] if want else ["origin/main", "main", "HEAD"]):
-        if _git("rev-parse", "--verify", "-q", ref).strip():
-            return ref
-    return "HEAD"
-
-
-def diff_lines(base: str, only: Iterable[str] = ()) -> Numbered:
-    """The lines the working tree adds against ``base`` (with their real line numbers), plus new untracked files.
-
-    ``only`` narrows both to those paths (the agent hook asks for the one file an edit changed)."""
-    spec = [f":(literal){p}" for p in only]
-    out: Numbered = {}
-    path, lno = "", 0
-    for ln in _git("diff", "-U0", "--no-color", "--diff-filter=ACMR", _base(base), "--", *spec).splitlines():
-        if ln.startswith("+++ "):
-            path = ln[6:] if ln.startswith("+++ b/") else ""
-        elif ln.startswith("@@"):
-            m = _HUNK.match(ln)
-            lno = int(m.group(1)) if m else 0
-        elif path and ln.startswith("+"):
-            out.setdefault(path, []).append((lno, ln[1:]))
-            lno += 1
-    for new in _git("ls-files", "--others", "--exclude-standard", "--", *spec).splitlines():
-        if new.endswith(CODE_SUFFIXES):
-            out[new] = _read(new)
-    # Build output and dependencies are never the change under review, tracked or not: an install in CI writes
-    # build/lib copies of the package, and scanning those flagged the rule docs' own bad examples (2026-11-05).
-    # Vendored, minified and bundled files are not the project's own code either (E35, 2026-11-05).
-    return {p: v for p, v in out.items() if not skipped(p) and not bundled(p)}
-
-
-def skipped(path: str) -> bool:
-    """``path`` lies in a folder the scan never reads (``SKIP_DIRS``, ``VENDORED_DIRS`` or an ``*.egg-info`` folder),
-    or is named as a minified file or a bundle chunk."""
-    parts = path.replace("\\", "/").split("/")
-    return (any(p in SKIP_DIRS or p in VENDORED_DIRS or p.endswith(".egg-info") for p in parts[:-1])
-            or bool(_BUNDLE_NAME.search(parts[-1])))
 
 
 _DEV_FINDING = re.compile(r"^- (?P<path>.+?):(?P<line>\d+) \[(?P<rule>R\d+\.\d+)\b[^\]]*\]: (?P<msg>.*)$")
@@ -168,6 +101,8 @@ def scan(files: Numbered, proj: Any = None) -> list[str]:
     for rel, numbered in sorted(files.items()):
         if proj is None or not proj.for_path(rel).excluded:
             found += scan_lines(rel, numbered)
+    guards = set_module("pipeline", GUARDS_MODULE)      # the learned guards run wherever the scan runs (2026-11-12, improvement plan)
+    found += guards.findings(files) if guards is not None else []
     return [f for f in found if _runs(f, proj)]
 
 
@@ -206,17 +141,17 @@ def scan_surface(files: Numbered, proj: Any = None, root: str = ".") -> list[str
 
 
 def _catalogued(finding: str) -> tuple[str, str]:
-    """``(path, rule)`` of a finding of a catalogue rule, or ``("", "")`` (a suppression finding, or not a finding)."""
+    """``(path, rule)`` of a finding of a catalogue rule or a guard, or ``("", "")`` (a suppression finding, not a finding)."""
     fields = finding_fields(finding)
     rule = str(fields["rule"]) if fields else ""
-    return (str(fields["path"]), rule) if fields and rule in PR_RULES_122 else ("", "")
+    return (str(fields["path"]), rule) if fields and (rule in PR_RULES_122 or rule.startswith(GUARD_PREFIX)) else ("", "")
 
 
 def _runs(finding: str, proj: Any) -> bool:
     path, rule = _catalogued(finding)
     if not rule:
         return True
-    return rule_status(rule) != DEPRECATED and (proj is None or proj.for_path(path).runs(rule))
+    return rule_status(rule) != DEPRECATED and (proj is None or (proj.for_path(path).runs(rule) and not proj.for_path(path).excluded))
 
 
 def level_of(finding: str, proj: Any) -> str:
@@ -224,17 +159,21 @@ def level_of(finding: str, proj: Any) -> str:
     path, rule = _catalogued(finding)
     if not rule:
         return "error"
+    if rule.startswith(GUARD_PREFIX):       # report-only on trial; a warning once active, unless the config raises it
+        guards = set_module("pipeline", GUARDS_MODULE)
+        return guards.level(rule, proj.for_path(path) if proj is not None else None) if guards is not None else "warn"
     if rule_status(rule) == PREVIEW:
         return "warn"
     return proj.for_path(path).level(rule) if proj is not None else "error"
 
 
 def blocking(shown: list[str], fail_on: str, proj: Any = None) -> list[str]:
-    """The findings that fail the scan: none with ``none``; never a preview rule's; with ``error`` only error-level ones."""
+    """The findings that fail the scan: none with ``none``; never a preview rule's; with ``error`` only error-level ones;
+    a learned guard's only at error level, whatever ``fail_on`` says (one on trial does not fail a scan)."""
     if fail_on == "none":
         return []
     return [f for f in shown if rule_status(_catalogued(f)[1]) != PREVIEW
-            and (fail_on != "error" or level_of(f, proj) == "error")]
+            and (level_of(f, proj) == "error" or (fail_on != "error" and not _catalogued(f)[1].startswith(GUARD_PREFIX)))]
 
 
 def finding_fields(finding: str) -> dict[str, str | int] | None:
@@ -245,13 +184,6 @@ def finding_fields(finding: str) -> dict[str, str | int] | None:
     return {"path": m["path"], "line": int(m["line"]), "rule": m["rule"] or "brevio-core", "message": m["msg"]}
 
 
-def _hint(rule: str) -> str:
-    """`` -> `` and the first line of the rule's good example, or "" when it has none."""
-    good = DETAILS[rule].good.strip() if rule in DETAILS else ""
-    first = good.splitlines()[0].strip() if good else ""
-    return f" -> {first[:AGENT_HINT]}" if first else ""
-
-
 def agent_lines(shown: list[str]) -> list[str]:
     """``path:line [R] message -> fix hint`` per finding, grouped by rule, cut at ``AGENT_MAX`` with "+N more".
 
@@ -259,7 +191,7 @@ def agent_lines(shown: list[str]) -> list[str]:
     order = {rid: i for i, rid in enumerate(rule_docs.rule_ids())}
     rows = sorted((f for f in map(finding_fields, shown) if f),
                   key=lambda f: (order.get(str(f["rule"]), len(order)), str(f["rule"]), str(f["path"]), int(f["line"])))
-    out = [f"{f['path']}:{f['line']} [{f['rule']}] {f['message']}{_hint(str(f['rule']))}" for f in rows[:AGENT_MAX]]
+    out = [f"{f['path']}:{f['line']} [{f['rule']}] {f['message']}{fix_hint(str(f['rule']), str(f['path']), str(f['message']))}" for f in rows[:AGENT_MAX]]
     return out + ([f"+{len(rows) - AGENT_MAX} more"] if len(rows) > AGENT_MAX else [])
 
 
@@ -279,6 +211,7 @@ def sarif(findings: list[str], silenced: Iterable[tuple[str, str]] = (),
     """The findings as a SARIF 2.1.0 log, for GitHub code scanning; a silenced one carries its reason as a suppression,
     and a warn-level one (``level``) is a SARIF warning."""
     results = []
+    guards, text_of = set_module("pipeline", GUARDS_MODULE), line_reader()
     for f, reason in [*((f, None) for f in findings), *silenced]:
         fields = finding_fields(f)
         if not fields:
@@ -288,20 +221,15 @@ def sarif(findings: list[str], silenced: Iterable[tuple[str, str]] = (),
             "message": {"text": fields["message"]},
             "locations": [{"physicalLocation": {"artifactLocation": {"uri": fields["path"]},
                                                 "region": {"startLine": fields["line"], "endLine": fields["line"], "startColumn": 1}}}]}
+        result.update(guards.fingerprints(fields, text_of) if guards is not None else {})     # a guard's hit keeps its identity when its line moves
         if reason is not None:
             result["suppressions"] = [{"kind": "inSource", "justification": reason}]
         results.append(result)
-    rules = [
-        {
-            "id": rid,
-            "shortDescription": {"text": text},
-            "defaultConfiguration": {"level": "error"},
-            "helpUri": f"https://brevio.pro/tools/agent-guard-playground?rule={rid}",
-        }
-        for rid, text in sorted(PR_RULES_122.items())
-    ]
-    return {"version": "2.1.0",
-            "runs": [{"tool": {"driver": {"name": "brevio-core", "rules": rules}}, "results": results}]}
+    rules = [{"id": rid, "shortDescription": {"text": text}, "defaultConfiguration": {"level": "warning" if rule_status(rid) == PREVIEW else "error"},
+              "help": {"text": f"brevio-core explain {rid} prints the rule page."}}
+             for rid, text in sorted(PR_RULES_122.items())]
+    release = init.release_info() if (init := set_module("pipeline", INIT_MODULE)) is not None else None     # the version and the tag of the rule pages
+    return core_sarif.log(results, rules, release)
 
 
 def write_atomic(path: str, text: str) -> None:
@@ -315,6 +243,7 @@ def write_atomic(path: str, text: str) -> None:
 FIXERS_MODULE = "fixers"   # the module of the 0.3 set that declares the fixers; a build without it offers no ``--fix``
 BASELINE_MODULE, MARKDOWN_MODULE = "core_baseline", "core_markdown"   # the 0.4 set; a build without them has no baseline
 CONFIG_MODULE = "core_config"   # the 0.6 set's brevio-core.toml (ROADMAP E32); a build without it reads no config
+GUARDS_MODULE, GUARD_PREFIX = "core_guards", "guard:"   # the 0.2 set's learned guards in the scan; a hit's rule ID is ``guard:<id>``
 Changes = dict[str, tuple[str, str, list[str]]]   # path -> (old text, new text, rule id of each fix made)
 Triaged = tuple[list[str], list[tuple[str, str]], list[str]]   # shown, silenced (finding, reason), baselined
 
@@ -388,19 +317,29 @@ def _code_only(lines: Numbered) -> Numbered:
     return {p: v for p, v in lines.items() if commented(p)}
 
 
-def _load_baseline(tools: Any) -> Any:
+def _load_baseline(tools: Any, where: Any = None) -> Any:
+    """The baseline of the nearest ``.brevio/baseline.json`` (``where``, from ``tools.locate``; the current folder's first)."""
     try:
-        return tools.load(tools.BASELINE_PATH)
+        return tools.load((where or tools.locate()).file)
     except ValueError as exc:
         raise UsageError(str(exc)) from exc
 
 
+def _need_base(want: str | None) -> None:
+    """A named ``--diff BASE`` must exist in this checkout; the bare ``--diff`` falls back to ``main`` or ``HEAD`` (D27, I1)."""
+    unborn = want == "HEAD" and _git("rev-parse", "--is-inside-work-tree").strip() == "true"     # a repository before its first commit: its files are all new
+    if want and not unborn and not _git("rev-parse", "--verify", "-q", want).strip():
+        raise UsageError(f"base '{want}' is not in this checkout (a shallow clone? fetch more history, or try --diff HEAD~3)")
+
+
 def triage(found: list[str] | None = None, fail_on: Any = "new", honour_ignores: bool = True,
-           lines: Any = None, config: Any = None, root: str = ".", findings: list[str] | None = None) -> Triaged:
+           lines: Any = None, config: Any = None, root: str = ".", findings: list[str] | None = None,
+           whole: list[str] | None = None) -> Triaged:
     """``found`` split into shown, silenced and baselined findings; all shown in a build without the 0.4 set.
 
     ``fail_on`` ``all`` ignores the baseline. ``honour_ignores`` is false on the agent paths (hook, MCP), so an agent
-    cannot silence a rule; such a finding says the comment counts in CI only."""
+    cannot silence a rule; such a finding says the comment counts in CI only. ``whole`` names the files of a diff scan,
+    read whole to see how often a baselined line occurs in them (D26)."""
     if findings is not None:
         found = findings
     if found is None:
@@ -412,9 +351,16 @@ def triage(found: list[str] | None = None, fail_on: Any = "new", honour_ignores:
     tools = baseline_tools()
     if tools is None:
         return found, [], []
-    base = None if fail_on == "all" else _load_baseline(tools)
-    t = tools.triage(found, finding_fields, line_reader(), base, honour_ignores, commented)
+    where = tools.locate(".", whole is not None)
+    base = None if fail_on == "all" else _load_baseline(tools, where)
+    totals = None
+    if whole is not None and base:
+        kept = tools.triage(scan(collect_files(whole)), finding_fields, line_reader(), None, honour_ignores, commented).shown
+        totals = tools.counts(kept, finding_fields, line_reader(), where.prefix)
+    t = tools.triage(found, finding_fields, line_reader(), base, honour_ignores, commented, where.prefix, totals)
     shown = t.shown
+    for note in tools.renamed_ignores(t.silenced, finding_fields):      # `scan` and `check` both come through here
+        print(f"brevio-core: warning: {note}", file=sys.stderr)
     if hasattr(tools, "partition"):
         shown = tools.partition(shown, root=root)
     return shown, t.silenced, t.baselined
@@ -423,16 +369,35 @@ def triage(found: list[str] | None = None, fail_on: Any = "new", honour_ignores:
 def new_suppressions(lines: Numbered, base: str) -> list[str]:
     """A finding for each ignore comment the change adds and each entry it adds to the baseline file."""
     tools = baseline_tools()
-    found = tools.added_ignores(_code_only(lines)) + _config_changes(lines, tools.SUPPRESSION_RULE)
-    after_text = _read_raw(tools.BASELINE_PATH) or ""
+    found = tools.added_ignores(_code_only(lines)) + _config_changes(lines, tools.SUPPRESSION_RULE) + guard_changes(base)
+    where = tools.locate(".", True)
+    after_text = _read_raw(where.file) or ""
     if not after_text:
         return found
-    before_text = _git("show", f"{_base(base)}:{tools.BASELINE_PATH}")
+    before_text = _git("show", f"{_base(base)}:./{where.file}")
+    record = where.file[:-len(tools.BASELINE_PATH)] + tools.INIT_RECORD       # ``init`` writes its record beside the baseline
+    if tools.init_wrote(before_text, _git("show", f"{_base(base)}:./{record}"), _read_raw(record) or "", after_text):
+        return found
     try:
         before = tools.parse(before_text) if before_text.strip() else Counter()
     except ValueError:      # a broken baseline on the base holds nothing to compare with: every entry is new
         before = Counter()
-    return found + tools.added_entries(before, _load_baseline(tools), after_text)
+    return found + tools.added_entries(before, _load_baseline(tools, where), after_text, where.file)
+
+
+def guard_changes(base: str) -> list[str]:
+    """A finding for each guard the working tree removes, switches off or narrows against ``base`` without the record
+    ``learn dismiss`` leaves (2026-11-12, improvement plan)."""
+    guards = set_module("pipeline", GUARDS_MODULE)
+    if guards is None:
+        return []
+    return guards.changes(_git("show", f"{_base(base)}:{guards.GUARDS_PATH}"), _read_raw(guards.GUARDS_PATH) or "")
+
+
+def known_rules() -> frozenset[str]:
+    """The rule IDs an ignore comment, a baseline entry or the config may name: the catalogue and the learned guards."""
+    guards = set_module("pipeline", GUARDS_MODULE)
+    return frozenset(PR_RULES_122) | frozenset(guards.known_rules() if guards is not None else ())
 
 
 def _config_changes(lines: Numbered, rule: str) -> list[str]:
@@ -452,11 +417,13 @@ def _config_changes(lines: Numbered, rule: str) -> list[str]:
 
 def warnings(lines: Numbered) -> list[str]:
     """Ignore comments that name an unknown rule or give no reason, and baseline entries of rules that do not exist."""
-    tools = baseline_tools()
+    guards, tools = set_module("pipeline", GUARDS_MODULE), baseline_tools()
+    notes = guards.problems() if guards is not None else []       # the 0.2 set has no baseline, and reads guards
     if tools is None:
-        return []
-    known = frozenset(PR_RULES_122)
-    return tools.ignore_warnings(_code_only(lines), known) + tools.stale_entries(_load_baseline(tools), known)
+        return notes
+    known = known_rules()
+    where = tools.locate()
+    return tools.ignore_warnings(_code_only(lines), known) + tools.stale_entries(_load_baseline(tools, where), known, where.file) + notes
 
 
 def _read_raw(path: str) -> str | None:
@@ -486,7 +453,7 @@ def plan_fixes(lines: Numbered) -> Changes:
             if not 0 < lno <= len(parts):
                 continue
             body = parts[lno - 1].rstrip("\r\n")
-            new, rules = fix_line(rel, body)
+            new, rules = fix_line(rel, body, numbered, lno)
             if rules and all(rule_status(r) != DEPRECATED and (cfg is None or cfg.runs(r)) for r in rules):
                 parts[lno - 1] = new + parts[lno - 1][len(body):]
                 made += rules
@@ -533,27 +500,51 @@ def _run_fix(named: list[str], diff: str | None, dry_run: bool, fail_on: str = "
 
 def _covered(named: list[str]) -> Callable[[str], bool]:
     """Whether a path lies under one of ``named`` (everything, when nothing or the current folder is named)."""
-    roots = [_rel(p) for p in named]
+    roots = [core_platform.shown(p) for p in named]
     if not roots or "." in roots:
         return lambda _path: True
     return lambda path: any(path == r or path.startswith(r.rstrip("/") + "/") for r in roots)
 
 
-def _run_baseline(named: list[str], diff: str | None) -> int:
+def _run_baseline(named: list[str], diff: str | None, prune: bool = False) -> int:
     """Record the findings of the selection in the baseline. A path scan replaces the entries of the paths it covers,
-    so fixed findings drop out; a diff scan only adds."""
+    so fixed findings drop out; a diff scan only adds; ``prune`` only drops the entries no finding matches any more."""
     tools = baseline_tools()
-    lines = select_lines(named, diff)
-    shown, _silenced, _baselined = triage(scan(lines), "all")   # a finding silenced in the code needs no entry
-    new = tools.counts(shown, finding_fields, line_reader())
-    merged = tools.merge(_load_baseline(tools), new, (lambda _path: False) if diff is not None else _covered(named))
-    os.makedirs(os.path.dirname(tools.BASELINE_PATH), exist_ok=True)
-    write_atomic(tools.BASELINE_PATH, tools.render(merged))
-    print(f"brevio-core: {sum(merged.values())} finding(s) in {tools.BASELINE_PATH}")
+    where = tools.locate(".", diff is not None)
+    if prune and (diff is not None or named not in ([], ["."]) or where.prefix):
+        raise UsageError("--prune reads the whole folder that holds .brevio: run it there, with no path and no --diff")
+    shown, _silenced, _baselined = triage(scan(select_lines(named, diff)), "all")   # a finding silenced in the code needs no entry
+    new, old, inside = tools.counts(shown, finding_fields, line_reader(), where.prefix), _load_baseline(tools, where), _covered(named)
+    merged, gone = tools.prune(old, new) if prune else (tools.merge(old, new, (lambda _path: False) if diff is not None else (
+        (lambda p: p.startswith(where.prefix + "/") and inside(p[len(where.prefix) + 1:])) if where.prefix else inside)), [])
+    for g in gone:
+        print(f"brevio-core: removed {g}")
+    if prune and not gone:
+        print("brevio-core: no entry is out of date; nothing removed")
+        return 0
+    os.makedirs(os.path.dirname(where.file), exist_ok=True)
+    write_atomic(where.file, tools.render(merged))
+    print(f"brevio-core: {sum(merged.values())} finding(s) in {where.file}")
+    for note in tools.secret_notes(merged):
+        print(f"brevio-core: {note}", file=sys.stderr)
     return 0
 
 
-def _print_findings(shown: list[str], silenced: int, baselined: int, args: argparse.Namespace) -> None:
+def _stale_notes(lines: Numbered, triaged: Triaged) -> list[str]:
+    """What a whole-folder scan can say about the baseline and the ignore comments: entries that match no finding any
+    more, and comments that silence nothing (I47, D55). A scan of a diff or of some paths cannot tell, so it says nothing."""
+    tools = baseline_tools()
+    where, (shown, silenced, baselined) = tools.locate(), triaged
+    if where.prefix:
+        return []
+    dead = tools.dead_entries(_load_baseline(tools, where), tools.counts(shown + baselined, finding_fields, line_reader()))
+    out = [f"{dead} baseline {'entry matches' if dead == 1 else 'entries match'} no finding; `brevio-core baseline --prune` removes "
+           f"{'it' if dead == 1 else 'them'}"] if dead else []
+    return out + tools.unused_ignores(_code_only(lines), silenced, finding_fields, scanned_rules())
+
+
+def _print_findings(shown: list[str], silenced: int, baselined: int, args: argparse.Namespace, read: int | None = None,
+                    red: frozenset[str] = frozenset()) -> None:
     fmt = getattr(args, "format", "text")
     if fmt == "agent":
         print("\n".join(agent_lines(shown)), end="\n" if shown else "")
@@ -561,22 +552,27 @@ def _print_findings(shown: list[str], silenced: int, baselined: int, args: argpa
     if fmt == "markdown":
         rows = [f for f in map(finding_fields, shown) if f]
         footer = upgrade_line("pr-comment", not getattr(args, "no_upgrade_line", False))
-        print(set_module("pipeline", MARKDOWN_MODULE).render(rows, silenced, baselined, args.rules_url, footer), end="")
+        print(set_module("pipeline", MARKDOWN_MODULE).render(rows, silenced, baselined, args.rules_url, footer, read, args.diff is not None), end="")
         return
     if fmt == "json":
         print(json.dumps({"findings": [finding_fields(f) for f in shown], "count": len(shown)}, indent=2))
         return
     if fmt == "github":
-        for f in shown:
+        for f in shown:     # an annotation is an error when the check is red because of it (``red``), else a warning (revisit D28)
             fields = finding_fields(f) or {}
-            path = fields.get("path", "")
-            line = fields.get("line", 1)
-            rule = fields.get("rule", "")
-            message = fields.get("message", "")
-            print(f"::warning file={path},line={line},title={rule}::{message}")
+            print(f"::{'error' if f in red else 'warning'} file={fields.get('path', '')},line={fields.get('line', 1)},title={fields.get('rule', '')}::{fields.get('message', '')}")
         return
     for f in shown:
         print(f)
+
+
+def _scan_notes(named: list[str], args: argparse.Namespace, lines: Numbered, triaged: Triaged) -> None:
+    """The stderr notes of a scan: the base a bare ``--diff`` fell back to, and what a whole-folder scan found stale."""
+    if args.diff == "" and _base("") == "HEAD":
+        print("brevio-core: base: HEAD (no origin/main or main in this checkout), so only uncommitted changes are read", file=sys.stderr)
+    if args.diff is None and named in ([], ["."]) and baseline_tools() is not None and not args.forbid_ignores:
+        for note in _stale_notes(lines, triaged):
+            print(f"brevio-core: note: {note}", file=sys.stderr)
 
 
 def _run_scan(named: list[str], args: argparse.Namespace) -> int:
@@ -584,12 +580,15 @@ def _run_scan(named: list[str], args: argparse.Namespace) -> int:
     lines = select_lines(named, args.diff)
     proj = project(lines)
     raw = scan_surface(lines, proj) if getattr(args, "surface", False) else scan(lines, proj)
-    shown, silenced, baselined = triage(raw, fail_on, not args.forbid_ignores)
+    triaged = triage(raw, fail_on, not args.forbid_ignores, whole=sorted(lines) if args.diff is not None else None)
+    shown, silenced, baselined = triaged
+    _scan_notes(named, args, lines, triaged)
     if args.diff is not None and not getattr(args, "allow_new_suppressions", True):
         shown += new_suppressions(lines, args.diff)
-    for w in warnings(lines) + (proj.warnings(PR_RULES_122) if proj is not None else []):
+    for w in warnings(lines) + (proj.warnings(known_rules()) if proj is not None else []):
         print(f"brevio-core: warning: {w}", file=sys.stderr)
-    _print_findings(shown, len(silenced), len(baselined), args)
+    core_surface.warn_select(proj, lines, getattr(args, "surface", False), GUARD_PREFIX)
+    _print_findings(shown, len(silenced), len(baselined), args, len(lines), frozenset(blocking(shown, fail_on, proj)))
     if args.sarif:
         write_atomic(args.sarif, json.dumps(sarif(shown, silenced, lambda f: level_of(f, proj)), indent=2))
     tail = f", {len(baselined)} baselined, {len(silenced)} silenced" if baseline_tools() is not None else ""
@@ -599,8 +598,8 @@ def _run_scan(named: list[str], args: argparse.Namespace) -> int:
     if getattr(args, "format", "text") == "text" and shown:
         first_rule = str((finding_fields(shown[0]) or {}).get("rule", ""))
         if first_rule.startswith("R"):
-            print(f"Explain & test fix: brevio-core explain {first_rule} | "
-                  f"https://brevio.pro/tools/agent-guard-playground?rule={first_rule}", file=sys.stderr)
+            print(f"Explain: brevio-core explain {first_rule}", file=sys.stderr)
+        core_surface.print_fixable(shown, fixers(), named, args.diff, finding_fields, line_reader())
     return _failed(shown, fail_on, proj)
 
 
@@ -618,11 +617,15 @@ UP_MODULE = "core_up"           # the 0.6 set's ``up`` preview and upgrade line 
 AEO_MODULE = "core_aeo"         # the 0.6 set's ``aeo``, the AEO rubric on local pages (ADOPTION.md 0.29); absent before it
 CHECK_MODULE = "core_gates"     # the 0.6 set's ``check`` pre-PR flight check
 BRIEF_MODULE = "core_memory"    # the 0.6 set's ``brief`` surface rules & trap recall
-SCORE_MODULE = "core_score"     # the 0.6 set's ``score`` Agent Safety Score & README badge
+SCORE_MODULE = "core_score"     # the 0.6 set's ``score`` (preview): findings counted by rule
 MAP_MODULE = "core_map"
 HEAL_MODULE = "core_heal"
 SHIELD_MODULE = "core_shield"
 TASK_MODULE = "core_task"
+ROAST_MODULE = "core_roast"     # ``roast``, the same counts as ``score`` under its old name: a module of its own, so a trimmed release can leave it out
+PATCH_MODULE = "core_patch"     # the 0.6 set's ``patch``, an edit written only when the rules find it clean (2026-11-11)
+AI_MODULE = "core_ai"           # the 0.7 set's ``ai``, the one command that may call a model: found by name, loaded only when it runs (2026-11-12)
+AI_HELP = "ask a model, or a program, you connect (connect, status, explain, fix, summarize, learn); asks before it sends"   # not in the module: listing loads nothing
 
 
 def _opt_cmd(cmd: str, pkg: str, mod_name: str) -> tuple[dict[str, Callable[[list[str]], int]], dict[str, str]]:
@@ -682,6 +685,16 @@ def shield_command() -> tuple[dict[str, Callable[[list[str]], int]], dict[str, s
     return _opt_cmd("shield", "pipeline", SHIELD_MODULE)
 
 
+def patch_command() -> tuple[dict[str, Callable[[list[str]], int]], dict[str, str]]:
+    return _opt_cmd("patch", "pipeline", PATCH_MODULE)
+
+
+def ai_command() -> tuple[dict[str, Callable[[list[str]], int]], dict[str, str]]:
+    top = "brevio" if __name__.startswith("__main__") else __name__.split(".")[0]
+    found = importlib.util.find_spec(f"{top}.pipeline.{AI_MODULE}") is not None      # found, not loaded (2026-11-12, claims check)
+    return ({"ai": lambda argv: int(set_module("pipeline", AI_MODULE).main(argv))}, {"ai": AI_HELP}) if found else ({}, {})
+
+
 def task_commands() -> tuple[dict[str, Callable[[list[str]], int]], dict[str, str]]:
     mod = set_module("pipeline", TASK_MODULE)
     if mod is None:
@@ -710,29 +723,7 @@ def task_commands() -> tuple[dict[str, Callable[[list[str]], int]], dict[str, st
 
 
 def roast_command() -> tuple[dict[str, Callable[[list[str]], int]], dict[str, str]]:
-    mod = set_module("pipeline", SCORE_MODULE)
-    if mod is None or not hasattr(mod, "main"):
-        return ({}, {})
-
-    def _run_roast(rest: list[str]) -> int:
-        return mod.main(["--roast", *rest], prog="brevio-core roast")
-
-    return ({"roast": _run_roast}, {"roast": "score the repository and print the engineering roast verdict"})
-
-
-def _learn(argv: list[str]) -> int:
-    mod = set_module("operator", "learn_cmd")
-    if mod is None or not hasattr(mod, "main"):
-        raise UsageError("learn command is not available in this build")
-    rc = mod.main(argv, prog="brevio-core learn")
-    if rc == 0:
-        try:
-            skill_mod = set_module("pipeline.gates", "agent_skill")
-            if skill_mod is not None and hasattr(skill_mod, "sync_learned_guards_to_skill"):
-                skill_mod.sync_learned_guards_to_skill(".")
-        except Exception:
-            pass
-    return rc
+    return _opt_cmd("roast", "pipeline", ROAST_MODULE)
 
 
 def _add_baseline_arguments(sub: Any, sc: argparse.ArgumentParser) -> None:
@@ -743,7 +734,7 @@ def _add_baseline_arguments(sub: Any, sc: argparse.ArgumentParser) -> None:
                     help="new (default): baselined findings are hidden and pass; all: ignore the baseline, any finding "
                          "fails; none: report what is not baselined and always exit 0"
                          + ("; error: like new, but only error-level findings fail (warn-level ones are reported)"
-                            if by_level else "") + ". A preview rule never fails")
+                            if by_level else "") + ". A preview rule does not fail a run; a learned guard fails one only at error level")
     sc.add_argument("--allow-new-suppressions", action="store_true",
                     help="with --diff: do not report the ignore comments and baseline entries the change adds "
                          "(for a change a person has reviewed)")
@@ -758,12 +749,14 @@ def _add_baseline_arguments(sub: Any, sc: argparse.ArgumentParser) -> None:
     bl = sub.add_parser("baseline", help=f"record the current findings in {tools.BASELINE_PATH}, so scan reports only new ones")
     bl.add_argument("paths", nargs="*", help="files or folders (default: the current folder)")
     bl.add_argument("--diff", nargs="?", const="", default=None, metavar="BASE",
-                    help="record only the findings on the lines added against BASE (default origin/main)")
+                    help="record only the findings on the lines added against BASE (default origin/main, else main, else HEAD); a BASE the checkout does not have exits 2")
+    bl.add_argument("--prune", action="store_true", help="only drop the entries no finding matches any more, and list them")
 
 
 def parser(tools: Iterable[str], tool_help: dict[str, str]) -> argparse.ArgumentParser:
     """The ``brevio-core`` argument parser; the commands and flags of later sets appear when the build ships them."""
     ap = argparse.ArgumentParser(prog="brevio-core", description="Zero-token code rules for coding-agent mistakes.")
+    ap.add_argument("-V", "--version", action="store_true", help="print the version and exit")      # read in ``main`` before parsing
     sub = ap.add_subparsers(dest="cmd", required=True)
     for name in tools:      # listed for ``--help``; the command itself reads the rest of the line
         sub.add_parser(name, help=tool_help[name], add_help=False)
@@ -772,7 +765,7 @@ def parser(tools: Iterable[str], tool_help: dict[str, str]) -> argparse.Argument
     sc.add_argument("paths", nargs="*", help="files or folders to scan (default: the current folder)")
     sc.add_argument("--file", action="append", default=[], metavar="PATH", help="a file to scan (repeatable)")
     sc.add_argument("--diff", nargs="?", const="", default=None, metavar="BASE",
-                    help="scan only the lines added against BASE (default origin/main)")
+                    help="scan only the lines added against BASE (default origin/main, else main, else HEAD); a BASE the checkout does not have exits 2")
     sc.add_argument("--sarif", metavar="FILE", help="also write the findings to FILE as SARIF")
     sc.add_argument("--forbid-ignores", action="store_true",
                     help="never honour an ignore comment (the agent hook runs with this, so an agent cannot silence a rule)")
@@ -788,13 +781,16 @@ def parser(tools: Iterable[str], tool_help: dict[str, str]) -> argparse.Argument
         cf = sub.add_parser("config", help=f"show the {cfg.CONFIG_NAME} settings that apply to a file or folder")
         cf.add_argument("path", nargs="?", default=".", help="the file or folder (default: the current folder)")
         cf.add_argument("--json", action="store_true", help="print it as JSON")
-    exp = sub.add_parser("explain", help="explain a rule, why it exists, and how to fix it")
+    exp = sub.add_parser("explain", help="explain a rule: why it exists, how to fix it, and its measured precision")
     exp.add_argument("rule_id", help="the rule id (e.g. R13.1)")
     rl = sub.add_parser("rules", help="list or query documented rules")
     rl.add_argument("--json", action="store_true", help="print rules catalog as JSON")
     rl.add_argument("-q", "--query", default=None, metavar="QUERY", help="filter rules by text query")
+    rl.add_argument("--scanned", action="store_true", help="list only the rules that scan checks (--surface adds more)")
     lk = sub.add_parser("leaks", help="check a folder for stray URLs, emails and paths that should not be public")
     lk.add_argument("root", nargs="?", default=".", help="the folder to check (default: the current folder)")
+    hp = sub.add_parser("help", help="show the short list of commands to start with")
+    hp.add_argument("--all", action="store_true", help="show the full list of commands")
     return ap
 
 
@@ -802,19 +798,7 @@ def _run_explain(rule_id: str) -> int:
     rid = rule_id.upper()
     if rid not in PR_RULES_122:
         raise UsageError(f"unknown rule: {rule_id}")
-    print(rule_docs.render(rid))
-    return 0
-
-
-def _run_rules(as_json: bool, query: str | None) -> int:
-    q = (query or "").strip().lower()
-    rules = [{"id": rid, "summary": PR_RULES_122[rid]} for rid in rule_docs.rule_ids()
-             if not q or q in rid.lower() or q in PR_RULES_122[rid].lower()]
-    if as_json:
-        print(json.dumps({"rules": rules, "count": len(rules)}, indent=2))
-    else:
-        for r in rules:
-            print(f"{r['id']}: {r['summary']}")
+    print(core_surface.explain_text(rid))
     return 0
 
 
@@ -822,9 +806,9 @@ def _run_config(path: str, as_json: bool) -> int:
     """``brevio-core config``: the effective settings for ``path``, with the files they come from."""
     if not os.path.exists(path):
         raise UsageError(f"no such file or folder: {path}")
-    rel = _rel(path)
+    rel = core_platform.shown(path)
     proj = project([rel])
-    for w in proj.warnings(PR_RULES_122):
+    for w in proj.warnings(known_rules()):
         print(f"brevio-core: warning: {w}", file=sys.stderr)
     desc = config_tools().describe(proj, rel, scanned_rules(), rule_status, os.path.isdir(path))
     print(json.dumps(desc, indent=2) if as_json else config_tools().render(desc), end="\n" if as_json else "")
@@ -835,15 +819,16 @@ def _dispatch(args: argparse.Namespace) -> int:
     if args.cmd == "explain":
         return _run_explain(args.rule_id)
     if args.cmd == "rules":
-        return _run_rules(args.json, args.query)
+        return core_surface.run_rules(args.json, args.query, args.scanned)
     if args.cmd == "config":
         return _run_config(args.path, args.json)
     named = [*args.paths, *getattr(args, "file", [])]
     missing = [p for p in named if not os.path.exists(p)]
     if missing:
         raise UsageError(f"no such file or folder: {', '.join(missing)}")
+    _need_base(getattr(args, "diff", None))
     if args.cmd == "baseline":
-        return _run_baseline(named, args.diff)
+        return _run_baseline(named, args.diff, args.prune)
     if getattr(args, "dry_run", False) and not args.fix:
         raise UsageError("--dry-run needs --fix")
     if getattr(args, "fix", False):
@@ -867,6 +852,8 @@ def line_commands() -> tuple[dict[str, Callable[[list[str]], int]], dict[str, st
         map_command(),
         heal_command(),
         shield_command(),
+        patch_command(),
+        ai_command(),
         task_commands(),
         up_command(),
     ):
@@ -889,41 +876,25 @@ def line_commands() -> tuple[dict[str, Callable[[list[str]], int]], dict[str, st
     return tools, tool_help
 
 
-def _interactive_entry(tools: dict[str, Callable[[list[str]], int]]) -> int:
-    """Zero-argument interactive TTY dispatcher: onboarding wizard on first run, quick-action menu thereafter."""
-    top = _git("rev-parse", "--show-toplevel").strip()
-    root = os.path.normpath(top) if top else "."
-    if "init" in tools and not os.path.isfile(os.path.join(root, ".brevio", "init.json")):
-        return tools["init"](["--wizard"])
-    print("brevio-core interactive quick actions:\n"
-          "  [1] Scan uncommitted changes (scan --diff HEAD) [default]\n"
-          "  [2] Run Pre-PR Flight Check (check)\n"
-          "  [3] Compile last fix into a guard (learn)\n"
-          "  [4] Run interactive setup wizard (init --wizard)\n"
-          "  [5] Compute Agent Safety Score & README badge (score)")
-    try:
-        choice = input("Choose [1/2/3/4/5] (Enter for 1): ").strip()
-    except EOFError:
-        choice = "1"
-    dispatch = {"2": ["check"], "3": ["learn"], "4": ["init", "--wizard"], "5": ["score"]}
-    target = dispatch.get(choice)
-    if target and target[0] in tools:
-        return tools[target[0]](target[1:])
-    return main(["scan", "--diff", "HEAD"] if has_head() else ["scan"])
-
-
 def main(argv: list[str] | None = None) -> int:
+    core_platform.use_utf8_streams()
+    return core_surface.guarded(lambda: _main(sys.argv[1:] if argv is None else argv))
+
+
+def _main(line: list[str]) -> int:
     tools, tool_help = line_commands()
     ap = parser(tools, tool_help)
-    line = sys.argv[1:] if argv is None else argv
-    if not line and sys.stdin.isatty() and sys.stdout.isatty():
-        return _interactive_entry(tools)
-    if line and line[0] in tools:
+    if line[:1] in (["--version"], ["-V"]):
+        init = set_module("pipeline", INIT_MODULE)
+        return core_surface.print_version(init.installed_metadata if init is not None else None)
+    if not line or line in (["-h"], ["--help"]) or line[0] == "help":      # the short help, at a terminal too: a bare run starts no wizard that writes files; ``help --all`` is the full one (2026-11-12)
+        return core_help.run(line[1:] if line[:1] == ["help"] else [], tools, ap.format_help, lambda name: _main([name, "--help"]))
+    if line[0] in tools:
         return tools[line[0]](line[1:])
     args = ap.parse_args(line)
     if args.cmd == "leaks":
         problems = leak_scan.scan_tree(args.root)
-        print("\n".join(problems))
+        print("\n".join(problems) or core_surface.no_leaks(args.root))
         return 1 if problems else 0
     try:
         return _dispatch(args)

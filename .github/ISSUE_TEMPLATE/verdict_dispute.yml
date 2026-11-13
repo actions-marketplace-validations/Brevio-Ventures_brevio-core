@@ -1,0 +1,47 @@
+name: Dispute a precision verdict
+description: A judged hit on the precision page that you think was judged the wrong way
+labels: ["precision verdict"]
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        The precision page shows, for each rule, how many of its judged hits were real, on human-written code, judged by
+        one reviewer. Every verdict and its one-line reason is in `docs/precision_sample.jsonl`. If you read a hit
+        differently, say so here: a verdict that changes moves the figure and the page, and the change is recorded in
+        the thread. We aim to give a first response within 7 days. Do not paste secrets, tokens or private code: the
+        hit is public code, so its repository, path and line are enough.
+  - type: input
+    id: hit
+    attributes:
+      label: Hit ID
+      description: The `id` of the entry in `docs/precision_sample.jsonl`.
+    validations:
+      required: true
+  - type: input
+    id: rule
+    attributes:
+      label: Rule ID
+      description: The rule of that hit, for example R9.2.
+    validations:
+      required: true
+  - type: dropdown
+    id: verdict
+    attributes:
+      label: The verdict you think is right
+      options:
+        - The rule is right (a real problem)
+        - The rule is wrong (not a problem)
+    validations:
+      required: true
+  - type: textarea
+    id: reason
+    attributes:
+      label: Why
+      description: What the code does, and why the finding is or is not a problem there. A link to the line at the pinned commit helps.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: The output of `pip show brevio-core`, or the release you read the page from. Leave it empty if you did not run it.

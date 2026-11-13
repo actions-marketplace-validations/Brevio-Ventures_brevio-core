@@ -22,7 +22,6 @@ from brevio.pipeline import core_cli
 from brevio.pipeline.core_markdown import escape
 
 HELP = "score a folder of built HTML pages, with its robots.txt and llms.txt, against the AEO rubric"
-HOSTED = "https://brevio.pro"
 PAGE_SUFFIXES = (".html", ".htm")
 SKIP_DIRS = frozenset({"node_modules"})          # plus every hidden folder
 # The site files the rubric reads, by the keyword ``rubric.score_page`` takes them under.
@@ -53,7 +52,7 @@ def refusal(arg: str) -> str:
     """What ``aeo`` says when it is given a URL: it reads local files only."""
     return (f"aeo reads local files only and does not fetch {arg}. Save the built page first (your browser's "
             "\"Save page as\", or your site's build output), put its robots.txt and llms.txt beside it, and run "
-            f"`brevio-core aeo` on that folder. Or use the hosted check at {HOSTED}.")
+            "`brevio-core aeo` on that folder.")
 
 
 def _read(path: str) -> str:
@@ -89,7 +88,9 @@ def has_md_mirror(root: str, rel: str) -> bool:
 
 def score_page(root: str, rel: str, site: dict[str, str]) -> dict:
     """The rubric's scorecard of one page, trimmed to what the report prints."""
-    card = rubric.score_page(html=_read(os.path.join(root, rel)), url=rel, has_md_mirror=has_md_mirror(root, rel), **site)
+    # No UX Bridge pillar: its advice is written for one product's own funnel pages, not for a site in general (2026-11-13).
+    card = rubric.score_page(html=_read(os.path.join(root, rel)), url=rel, has_md_mirror=has_md_mirror(root, rel),
+                             ux_bridge=False, **site)
     return {"path": rel, "score": card["score"], "grade": card["grade"],
             "pillars": {name: p["score"] for name, p in card["pillars"].items()}, "gaps": card["gaps"]}
 

@@ -147,7 +147,8 @@ def is_lesson_stale(entry: dict[str, Any], root: str = ".") -> bool:
 
 def _git(cwd: str, *args: str) -> str:
     try:
-        r = subprocess.run([*GIT, "-C", cwd, *args], capture_output=True, text=True, timeout=30)
+        r = subprocess.run([*GIT, "-C", cwd, *args],
+                           capture_output=True, encoding="utf-8", errors="replace", timeout=30)
     except (OSError, subprocess.SubprocessError):
         return ""
     return r.stdout if r.returncode == 0 else ""
@@ -406,7 +407,7 @@ def _load_active_guards(root: str, target_files: Iterable[str]) -> list[dict[str
             data = json.load(fh)
     except Exception:
         return []
-    raw = data.get("guards", {})
+    raw = data.get("guards", {}) if isinstance(data, dict) else {}     # a guards file that is a list is no guards, not a crash
     items = raw if isinstance(raw, list) else (list(raw.values()) if isinstance(raw, dict) else [])
     norm_targets = {t.replace(os.sep, "/").lstrip("./") for t in target_files}
     matched = []

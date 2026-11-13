@@ -32,13 +32,14 @@ def _run_install_cmd(args: argparse.Namespace) -> int:
     if getattr(args, "target", None):
         targets = [t.strip() for t in args.target.split(",") if t.strip()]
 
+    init = core_cli.set_module("pipeline", "core_init")      # absent from the early sets; then the hook is not pinned
+    release = init.release_info() if init is not None else None
+    version = release.version if release is not None else None
     force_all = getattr(args, "all", False)
     if force_all:
-        results = agent_hooks.install_all_hooks(force_all=True)
-    elif targets is not None:
-        results = agent_hooks.install_targeted_hooks(targets=targets)
+        results = agent_hooks.install_all_hooks(force_all=True, version=version)
     else:
-        results = agent_hooks.install_targeted_hooks()
+        results = agent_hooks.install_targeted_hooks(targets=targets, version=version)
 
     if args.json:
         print(json.dumps(results, indent=2))
@@ -51,6 +52,10 @@ def _run_install_cmd(args: argparse.Namespace) -> int:
         status_val = results.get(agent_name)
         status_text = "✅ Installed" if status_val is True else ("❌ Failed" if status_val is False else "○ Skipped (not detected)")
         print(f"  {agent_name:12}: {status_text}")
+    for line in agent_hooks.hook_files(results):
+        print(f"  wrote {line}, run by uvx (uvx needs to be on PATH)")
+    if version and agent_hooks.hook_files(results):
+        print(f"  The hooks run brevio-core {version} until you run `{args.command} install` again.")
     print("  Status: Active agents now check their edits against the rules, with no model call.")
     return 0
 

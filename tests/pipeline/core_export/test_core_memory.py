@@ -228,5 +228,16 @@ class TestCoreMemoryStalenessAndRecording(unittest.TestCase):
             self.assertEqual(len(all_eps), 1)
 
 
+class TestBriefReadsAGuardsFileSafely(unittest.TestCase):
+    def test_a_guards_file_that_is_a_list_gives_no_guards_instead_of_a_crash(self):
+        with tempfile.TemporaryDirectory() as d:
+            os.makedirs(os.path.join(d, ".brevio"))
+            with open(os.path.join(d, ".brevio", "guards.json"), "w", encoding="utf-8") as fh:
+                fh.write("[1, 2]")   # (2026-11-11) heal used to hide this crash behind a bare except
+            with open(os.path.join(d, "a.py"), "w", encoding="utf-8") as fh:
+                fh.write("x = 1\n")
+            self.assertEqual(brief_for_files(["a.py"], root=d)["guards"], [])
+
+
 if __name__ == "__main__":
     unittest.main()
