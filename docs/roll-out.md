@@ -34,7 +34,7 @@ documentation for that, and test on one repository before you use it on many.
         "hooks": [
           {
             "type": "command",
-            "command": "uvx brevio-core==0.10.0 hook run --event post-edit",
+            "command": "uvx brevio-core==0.11.0 hook run --event post-edit",
             "timeout": 30
           }
         ]
@@ -44,7 +44,7 @@ documentation for that, and test on one repository before you use it on many.
         "hooks": [
           {
             "type": "command",
-            "command": "uvx brevio-core==0.10.0 hook run --event post-command",
+            "command": "uvx brevio-core==0.11.0 hook run --event post-command",
             "timeout": 30
           }
         ]
@@ -55,7 +55,7 @@ documentation for that, and test on one repository before you use it on many.
         "hooks": [
           {
             "type": "command",
-            "command": "uvx brevio-core==0.10.0 hook run --event stop",
+            "command": "uvx brevio-core==0.11.0 hook run --event stop",
             "timeout": 30
           }
         ]

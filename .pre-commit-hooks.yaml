@@ -1,6 +1,6 @@
 - id: brevio-core
   name: brevio-core scan
-  description: Zero-token code rules that catch mistakes coding agents keep repeating
+  description: Code rules, with no model call, that catch mistakes coding agents keep repeating
   entry: brevio-core scan
   language: python
   files: \.(py|ts|tsx|js|jsx|mjs|cjs|css|html|sql|vue|svelte)$

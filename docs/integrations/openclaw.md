@@ -23,7 +23,7 @@ The same skill is published to the skill registry with each release, so it can b
 Add brevio-core where your OpenClaw configuration lists MCP servers, with this command and these arguments:
 
 ```json
-{ "brevio-core": { "command": "uvx", "args": ["brevio-core==0.10.0", "mcp"] } }
+{ "brevio-core": { "command": "uvx", "args": ["brevio-core==0.11.0", "mcp"] } }
 ```
 
 `scan`, the agent hook and the MCP server use no network and send nothing.

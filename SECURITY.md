@@ -15,12 +15,6 @@ brevio-core reads source files and diffs on your machine. `scan`, the agent hook
 send nothing. A report that any command sends data,
 runs code from the files it scans, or writes outside the files you name is in scope.
 
-The optional `brevio-core ai` commands send a request when you connect a model or a program and answer yes. The
-request is the text they print first: lines of your code, or rule IDs and counts for `summarize`. It goes to the address you
-connected or, with a command connector, to the standard input of the program you named. A report that they send more than the
-request they print, send without your yes, or start a program other than the one you named is in scope. What the program you
-named does with the request is outside brevio-core.
-
 ## Supported versions
 
 Only the latest release gets fixes.

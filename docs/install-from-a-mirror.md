@@ -12,7 +12,7 @@ network policy.
 Point `pip` at the mirror's simple index and pin the version:
 
 ```sh
-pip install --index-url <the simple index of your mirror> brevio-core==0.10.0
+pip install --index-url <the simple index of your mirror> brevio-core==0.11.0
 ```
 
 `pip` reads the same address from the `PIP_INDEX_URL` environment variable. The mirror needs this one package, because
@@ -23,8 +23,8 @@ brevio-core depends on no other.
 On a machine that reaches PyPI, or your mirror, download the wheel and write down its hash:
 
 ```sh
-pip download --no-deps brevio-core==0.10.0 --dest wheels
-pip hash wheels/brevio_core-0.10.0-py3-none-any.whl
+pip download --no-deps brevio-core==0.11.0 --dest wheels
+pip hash wheels/brevio_core-0.11.0-py3-none-any.whl
 ```
 
 PyPI keeps an attestation for the files of a release. Check it where you downloaded the wheel, with the command in
@@ -34,13 +34,13 @@ is cut off.
 Carry the `wheels` folder across, then install from it and from nothing else:
 
 ```sh
-pip install --no-index --no-deps wheels/brevio_core-0.10.0-py3-none-any.whl
+pip install --no-index --no-deps wheels/brevio_core-0.11.0-py3-none-any.whl
 ```
 
 To pin the hash, put the value `pip hash` printed in a requirements file and install with `--require-hashes`:
 
 ```sh
-brevio-core==0.10.0 --hash=sha256:<the value pip hash printed>
+brevio-core==0.11.0 --hash=sha256:<the value pip hash printed>
 pip install --require-hashes --no-index --no-deps --find-links wheels -r requirements.txt
 ```
 
@@ -65,9 +65,9 @@ Action's `source` input a path to it:
 
 ```yaml
 - uses: actions/checkout@<the full commit SHA>
-- uses: Brevio-Ventures/brevio-core@v0.10.0
+- uses: Brevio-Ventures/brevio-core@v0.11.0
   with:
-    source: vendor/brevio_core-0.10.0-py3-none-any.whl
+    source: vendor/brevio_core-0.11.0-py3-none-any.whl
 ```
 
 The Action also uses two actions from GitHub (`actions/setup-python` and `github/codeql-action/upload-sarif`), so the

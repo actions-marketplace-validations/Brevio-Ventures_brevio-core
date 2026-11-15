@@ -1,5 +1,81 @@
 # Changelog
 
+## 0.11.0
+
+### Added
+
+#### The facts of a run
+
+- `scan --format markdown --facts` ends the report with one line: the version, the rules that ran after `brevio-core.toml`, the files read, base and head, and how long this run took. The rule count falls when the config file switches a rule off. It is off unless you ask for it.
+- The time differs per runner and per run. Read it as this run's time, not as a figure to compare.
+- With a base, the line also gives the command that repeats the scan. `--no-reproduce` leaves that command out. The Action leaves it out when `source` is set.
+- The Action input `facts` (default `false`) passes the flag. An older package that does not know `--facts` gets a notice and no flag, so it does not end with exit code 2.
+- A pull request from a fork gets no comment, whatever `facts` says. The job summary carries the line there.
+- The flag names `--facts` and `--no-reproduce`, the input name `facts`, and the fields of the line stay as they are from this release, because later tools may read the line.
+
+### Changed
+
+#### Memory
+
+- `scan` of a folder and `check` now read files one at a time. Before, they read the lines of all the files when they collected them. Measured on synthetic trees, the peak Python memory of `scan` fell to about half on a tree of some hundreds of files. It fell to about a third on a tree of some thousands. For `check` on a new repository it fell to about a quarter on the larger of two trees.
+- On one machine, a scan of the larger tree took a few per cent longer, and `scan --surface` took about a third longer on the smaller one. A diff scan keeps the lines the change adds in memory, as before.
+- A file that reports no size and never ends, such as a link to a device, now reads as too big instead of being read without limit. A file over one million bytes reads as empty in `check`, as it already did in `scan`.
+
+#### Guards
+
+- A guard can now list paths it should not watch, with the optional key `exclude_file_patterns` in `.brevio/guards.json`. A test under an API folder is no longer flagged by a guard meant for application code.
+- Matching of the exclude list is case-sensitive on Linux, macOS and Windows alike.
+- `learn import` accepts and checks the new list. It refuses an absolute path, a path that leaves the repository, or a very long or wildcard-heavy glob, and says why.
+- A change that adds an excluded path to a live guard is reported for review, like any other narrowing of a guard.
+- The FastAPI starter pack's blocking-call guard now leaves out tests and `conftest.py`. Run `brevio-core add fastapi-async` again to get it. That resets the pack's status and counters.
+- A list that leaves the guard nothing to watch is not used, and `learn import` refuses it. `scan` says so, so such a list does not switch a guard off.
+- Older releases ignore the new key without a message, so they still report the excluded paths.
+- A guard that `learn` compiles from a `.ts` fix now also watches `.tsx` files in the same folder. A guard written by an older release keeps its own list.
+- A guard whose bounded repeats and alternatives multiply into very many ways to match is no longer run as a regular expression. It matches as plain text, as a risky pattern already did. Sixteen `x?` in a row is one example.
+- `learn --diff` refuses a value that starts with a hyphen. Git would read it as an option.
+- The agent skill file now has one sentence that tells agents not to run the optional model command, which sends code to a model the person has connected.
+
+#### Windows
+
+- The call-count ledger of the optional model command is now locked on Windows too, with a lock file beside the ledger, so two commands at once take turns. Before, Windows had no lock.
+- The check that the settings file is yours alone still runs on systems with user ids only. Windows file permissions are not read.
+
+#### The optional plugin
+
+- If you installed `brevio-core-assist`, remove it with `pip uninstall brevio-core-assist` before you upgrade. The plugin was last built for 0.9.1 and pins that core version exactly, so pip warns of a conflict when the core moves. The core no longer reads its `BREVIO_ASSIST_*` variables.
+
+#### Pull request body and check heading
+
+- The pull-request body of the task commands no longer holds a fixed five-step list. A step is read from the file it wrote (`.brevio/connection.json`, `task_plan.json`, `BUILD_PACKET.md`, `qa_report.json`), or it reads "not run". The words "receipt" and "verified" are gone from the body, the help text and the command page.
+- The `check` output and the MCP tool are headed "Pre-PR flight check", not "Pre-PR Flight Check Receipt". The counts are unchanged.
+- `check` fails and says why when git could not give it the diff. Before, a failed or timed-out git call read as an empty diff and `check` printed PASSED. The output now says that no check ran and lists no check as OK.
+
+#### Starter packs
+
+- The packs are called hand-written starter packs. The words "curated" and "community" and the line about prompt tokens are gone, because the packs are typed in the code and the figure was never measured.
+- The `eu-ai-act` pack's description says what its guard looks for, a JSON response on a chat, generate or llm route with no `X-AI-Generated` header, and makes no legal claim.
+- The `pack-billing-idempotency-key` guard never matched: its pattern held a repeated group, which the scan runs as text. It now flags a payment `create` call that closes after one object on its line, with no options argument for a key. A call that spans lines is not read.
+- The `pack-billing-webhook-raw-body` guard also flags `constructEvent(JSON.parse(...))` and `constructEvent(JSON.stringify(...))`.
+- Run `brevio-core add stripe-polar-billing` again to get both guards. That resets the pack's status and counters, and findings can change for a project that installed the pack.
+- The ten pack guards are now run on a line they must flag and a line they must not.
+
+#### Privacy text
+
+- The text on `share` says it would turn the counts that `gain` prints into a public link. `gain` prints no link, and `share` is not part of this release.
+
+#### Leaks
+
+- `leaks` no longer stops with an error on a link whose target is gone. It skips that link and reads the other files.
+
+#### Precision
+
+- 0.11.0 publishes no new precision figure. The TypeScript and JavaScript figures stay as recorded on 2026-11-06, and the page says so. Python reads "not measured".
+- You can now keep several precision corpora, one per language, in `tools/precision_corpus.json`. A rule page shows the precision measured for the languages it reads and says "not measured" for a language with no corpus.
+- The [precision page](precision.md) and the rule pages now give counts with a Wilson score interval, not a bare percentage. They name the corpus, the scanner and the date, and the reviewer once one is recorded.
+- The recorded TypeScript verdicts name no reviewer, and the page says so.
+- Hit counts per repository are not published from 0.11.0 on: totals only. The counts stay in a local file that a release does not ship.
+- `tools/precision_run.py` has new options: `--corpus-name`, `--pin` (pins repositories to a commit and records their licence), `--detail`, `--reviewer` and `--publish`. `--publish` refuses a sample that has an unjudged hit, no reviewer, or rows added or removed.
+
 ## 0.10.0
 
 ### Changed: what a 0.9.1 user must know
@@ -86,7 +162,7 @@
 #### The optional plugin
 
 - The optional plugin `brevio-core-assist` is not built after 0.9.1 and stays installable. The core does not read its
-  `BREVIO_ASSIST_*` variables. `brevio-core ai connect --url URL --key-env NAME` replaces it.
+  `BREVIO_ASSIST_*` variables.
 
 ### Added
 

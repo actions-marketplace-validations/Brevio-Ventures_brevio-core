@@ -22,7 +22,7 @@ Add brevio-core where your Hermes configuration lists MCP servers, with this com
 ```yaml
 brevio-core:
   command: uvx
-  args: ["brevio-core==0.10.0", "mcp"]
+  args: ["brevio-core==0.11.0", "mcp"]
 ```
 
 Start Hermes in the repository: the server reads only the folder it was started in. `scan`, the agent hook and the

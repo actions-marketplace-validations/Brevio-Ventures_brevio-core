@@ -60,6 +60,6 @@ Run it after the build step, on the build output:
 
 ```yaml
       - run: npm run build
-      - run: pip install brevio-core==0.10.0
+      - run: pip install brevio-core==0.11.0
       - run: brevio-core aeo out/ --min 75 --format markdown >> "$GITHUB_STEP_SUMMARY"
 ```

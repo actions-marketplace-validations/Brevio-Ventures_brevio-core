@@ -14,25 +14,24 @@ Every `brevio-core` command and option, generated from the argument definitions 
 | [`brevio-core learn`](#brevio-core-learn) | compile a fixed defect (a git diff) into a local guard and an agent rule |
 | [`brevio-core hook`](#brevio-core-hook) | install the scan hook into the coding agents found here (hook install \| status \| detect) |
 | [`brevio-core gain`](#brevio-core-gain) | print what the local ledger recorded: hits found by learn --check, learned guards, savings only when measured |
-| [`brevio-core add`](#brevio-core-add) | add a curated guard pack by name (no name lists the packs) |
-| [`brevio-core pack`](#brevio-core-pack) | install or list community zero-token guard packs |
+| [`brevio-core add`](#brevio-core-add) | add a hand-written starter guard pack by name (no name lists the packs) |
+| [`brevio-core pack`](#brevio-core-pack) | install or list hand-written starter guard packs |
 | [`brevio-core mcp`](#brevio-core-mcp) | serve scan, explain, list_rules and learn to an agent over MCP on stdin and stdout |
 | [`brevio-core init`](#brevio-core-init) | set this repository up in one step: the Action, agent rules and a baseline (init --undo takes it back) |
 | [`brevio-core aeo`](#brevio-core-aeo) | score a folder of built HTML pages, with its robots.txt and llms.txt, against the AEO rubric |
 | [`brevio-core check`](#brevio-core-check) | run the pre-PR flight check (rules, test custody, test imports, conflict markers and complexity) |
-| [`brevio-core brief`](#brevio-core-brief) | print the zero-token rule & trap briefing for the files you are about to edit |
+| [`brevio-core brief`](#brevio-core-brief) | print the rule & trap briefing for the files you are about to edit (no model call) |
 | [`brevio-core score`](#brevio-core-score) | preview: count the findings of a scan by rule and say what to do next |
 | [`brevio-core roast`](#brevio-core-roast) | preview: the same counts as score, under its earlier name |
-| [`brevio-core map`](#brevio-core-map) | build a zero-token Personalized PageRank repository symbol map and index |
+| [`brevio-core map`](#brevio-core-map) | build a Personalized PageRank repository symbol map and index (no model call) |
 | [`brevio-core heal`](#brevio-core-heal) | scan, apply the deterministic fixes, and print what still needs a person (exit 1 while anything remains) |
 | [`brevio-core shield`](#brevio-core-shield) | answer a maintainer's pull-request comment (fix, explain, roast, triage, heal) from the command line |
 | [`brevio-core patch`](#brevio-core-patch) | apply SEARCH/REPLACE blocks or a unified diff, only when the rules find the changed lines clean |
-| [`brevio-core ai`](#brevio-core-ai) | ask a model, or a program, you connect (connect, status, explain, fix, summarize, learn); asks before it sends |
 | [`brevio-core connect`](#brevio-core-connect) | detect stack and coding clients and write CLAUDE.md, CONSTITUTION.md & roadmap.json (--dry-run lists them first) |
 | [`brevio-core plan`](#brevio-core-plan) | create a single-task implementation plan (.brevio/task_plan.json & .brevio/TASK_PLAN.md) |
 | [`brevio-core build`](#brevio-core-build) | execute single-task build preparation and deterministic auto-fixes |
 | [`brevio-core qa`](#brevio-core-qa) | run the single-task pre-PR quality gates and count the findings (of the task's diff; --all counts the whole repository) |
-| [`brevio-core pr`](#brevio-core-pr) | verify QA gates and generate a pull-request receipt (.brevio/PR_BODY.md) |
+| [`brevio-core pr`](#brevio-core-pr) | run the QA gates and write a pull-request body from what they found (.brevio/PR_BODY.md) |
 | [`brevio-core task`](#brevio-core-task) | run the single-task local workflow (connect -&gt; plan -&gt; build -&gt; qa -&gt; pr) |
 | [`brevio-core up`](#brevio-core-up) | show what a team sync would take from this repository (uploads nothing) |
 
@@ -58,6 +57,8 @@ brevio-core scan [options] [paths ...]
 | `--allow-new-suppressions` |  | with --diff: do not report the ignore comments and baseline entries the change adds (for a change a person has reviewed) |
 | `--format {text,markdown,agent,json,github}` | `text` | how to print the findings (agent: one short line each with a fix hint, grouped by rule, at most 20) |
 | `--rules-url BASE` |  | with --format markdown: link each rule ID to BASE&lt;ID&gt; |
+| `--facts` |  | with --format markdown: end the report with one line of the facts of this run (version, rules that ran, files read, base, head, time) |
+| `--no-reproduce` |  | with --facts: leave out the command that repeats the scan (the Action sets it when it installs from a source) |
 | `--no-upgrade-line` |  | with --format markdown: leave out the closing Teams line (the Action's footer: false) |
 
 ## `brevio-core baseline`
@@ -169,7 +170,7 @@ brevio-core learn [options] [ACTION] [GUARD_ID] [PATH:LINE]
 
 Install the scan hook into the coding agents found here (hook install | status | detect).
 
-Wire zero-token hooks and progressive rules into coding agents (Claude, Cursor, Hermes).
+Wire hooks and progressive rules into coding agents (Claude, Cursor, Hermes); the hooks make no model call.
 
 ```
 brevio-core hook [options] {install,status,detect,run} ...
@@ -250,7 +251,7 @@ brevio-core gain [options]
 
 ## `brevio-core add`
 
-Add a curated guard pack by name (no name lists the packs).
+Add a hand-written starter guard pack by name (no name lists the packs).
 
 Install the pack called NAME. `brevio-core add` and `brevio-core pack` with no name list the packs.
 
@@ -265,9 +266,9 @@ brevio-core add [options] pack
 
 ## `brevio-core pack`
 
-Install or list community zero-token guard packs.
+Install or list hand-written starter guard packs.
 
-Install curated zero-token community guard packs (Next.js, Stripe, FastAPI, EU AI Act, Supabase).
+Install hand-written starter guard packs (Next.js, Stripe, FastAPI, EU AI Act, Supabase).
 
 ```
 brevio-core pack [options] {list,add} ...
@@ -279,7 +280,7 @@ brevio-core pack [options] {list,add} ...
 
 ### `brevio-core pack list`
 
-List available community guard packs.
+List the starter guard packs.
 
 ```
 brevio-core pack list [options]
@@ -291,7 +292,7 @@ brevio-core pack list [options]
 
 ### `brevio-core pack add`
 
-Add a community guard pack.
+Add a starter guard pack.
 
 Install the pack called NAME. `brevio-core add` and `brevio-core pack` with no name list the packs.
 
@@ -357,13 +358,13 @@ brevio-core check [options] [paths ...]
 | Argument | Default | What it does |
 | --- | --- | --- |
 | `--base BASE` |  | git base ref to compare against (default: the base of scan --diff: origin/main, main or HEAD) |
-| `--json` |  | output JSON receipt |
-| `--format {text,markdown,json}` | `text` | receipt format |
+| `--json` |  | output JSON |
+| `--format {text,markdown,json}` | `text` | output format |
 | `[paths ...]` |  | optional paths to check |
 
 ## `brevio-core brief`
 
-Print the zero-token rule & trap briefing for the files you are about to edit.
+Print the rule & trap briefing for the files you are about to edit (no model call).
 
 ```
 brevio-core brief [options] [files ...]
@@ -413,7 +414,7 @@ brevio-core roast [options] [paths ...]
 
 ## `brevio-core map`
 
-Build a zero-token Personalized PageRank repository symbol map and index.
+Build a Personalized PageRank repository symbol map and index (no model call).
 
 Zero-Dependency Personalized PageRank Repo Map
 
@@ -480,109 +481,6 @@ brevio-core patch [options] FILE
 | `--path PATH` |  | the file a SEARCH/REPLACE block applies to when it names none |
 | `--json` |  | print the verdict as JSON |
 
-## `brevio-core ai`
-
-Ask a model, or a program, you connect (connect, status, explain, fix, summarize, learn); asks before it sends.
-
-Off until you connect a model or a program. One call for one thing, after you have read the request and said yes. Nothing goes to Brevio.
-
-```
-brevio-core ai {connect,status,explain,fix,summarize,learn} ...
-```
-
-### `brevio-core ai connect`
-
-Write your own settings file: which endpoint, which model, which commands.
-
-```
-brevio-core ai connect [options]
-```
-
-| Argument | Default | What it does |
-| --- | --- | --- |
-| `--name NAME` | `default` | a name for this connection (default: default) |
-| `--url URL` |  | the endpoint's address; https, or http for this machine only |
-| `--format {chat,messages}` | `chat` | the shape of the request (default chat) |
-| `--model MODEL` |  | the model name the endpoint expects |
-| `--key-env KEY_ENV` |  | the NAME of the environment variable that holds your key (the key is never stored) |
-| `--local PORT` |  | an endpoint on this machine at PORT: no key, nothing leaves it |
-| `--program PROGRAM` |  | (preview) a program you name instead of an endpoint: its absolute path is found now and stored. It is started once per call with the request on its standard input; it may send the request elsewhere, which brevio-core cannot see. Use --arg and --pass-env with it |
-| `--arg TEXT` |  | an argument for the program, written --arg=TEXT, repeated for more; it is kept in your settings file, which a repository's brevio-core.toml cannot set |
-| `--pass-env NAME` |  | the NAME of an environment variable the program is started with, besides the few it needs to start; repeated for more |
-| `--use LIST` |  | the commands this connection serves, comma separated (default explain,fix; the others are summarize, learn, previews); one it served before and you leave out is turned off |
-
-### `brevio-core ai status`
-
-What is connected, which commands are on, today's calls, the limits and the consent here.
-
-```
-brevio-core ai status
-```
-
-### `brevio-core ai explain`
-
-A model's explanation of one finding.
-
-```
-brevio-core ai explain [options] [finding]
-```
-
-| Argument | Default | What it does |
-| --- | --- | --- |
-| `[finding]` |  | one finding as scan prints it: path:line: [Rn.n] message |
-| `--last` |  | use the first finding of a fresh scan instead |
-| `--context N` |  | lines either side of the flagged one that are sent (default 0; 0 sends the line alone) |
-| `--dry-run` |  | print the request and stop before anything goes out |
-| `--yes` |  | answer the Send it? question for you, at a terminal too; the request is still printed. It never answers the first-use agreement (a yes at a terminal) and never --apply |
-
-### `brevio-core ai fix`
-
-A model's fix for one finding, checked by the rules before it is shown.
-
-```
-brevio-core ai fix [options] [finding]
-```
-
-| Argument | Default | What it does |
-| --- | --- | --- |
-| `[finding]` |  | one finding as scan prints it: path:line: [Rn.n] message |
-| `--last` |  | use the first finding of a fresh scan instead |
-| `--context N` |  | lines either side of the flagged one that are sent (default 5; 0 sends the line alone) |
-| `--dry-run` |  | print the request and stop before anything goes out |
-| `--yes` |  | answer the Send it? question for you, at a terminal too; the request is still printed. It never answers the first-use agreement (a yes at a terminal) and never --apply |
-| `--show-refused` |  | when the rules refuse the reply, also show its text, spelled out and framed as refused model output (without it only the reasons) |
-| `--apply` |  | write the verified change to the working tree after a second yes at a terminal; it is never committed |
-
-### `brevio-core ai summarize`
-
-(preview) one call: what kinds of finding a change has, from rule IDs, titles and counts only.
-
-```
-brevio-core ai summarize [options]
-```
-
-| Argument | Default | What it does |
-| --- | --- | --- |
-| `--diff BASE` |  | the base to scan the changes against, as `scan --diff` takes it |
-| `--format {text,markdown}` | `text` | how the model-written answer is framed |
-| `--dry-run` |  | print the request and stop before anything goes out |
-| `--yes` |  | answer the Send it? question for you, at a terminal too; the request is still printed. It does not answer the first-use agreement |
-
-### `brevio-core ai learn`
-
-(preview) a model's patterns for a guard from a fix, kept only if the checks of `brevio-core learn` pass; it sends and writes only at a terminal.
-
-```
-brevio-core ai learn [options]
-```
-
-| Argument | Default | What it does |
-| --- | --- | --- |
-| `--staged` |  | the staged fix (git diff --cached) |
-| `--worktree` |  | the uncommitted fix (the working tree against HEAD) |
-| `--diff REF` | `HEAD~1` | a commit or range to learn from (default HEAD~1) |
-| `--dry-run` |  | print the request and stop before anything goes out |
-
 ## `brevio-core connect`
 
 Detect stack and coding clients and write CLAUDE.md, CONSTITUTION.md & roadmap.json (--dry-run lists them first).
@@ -648,7 +546,7 @@ brevio-core qa [options]
 
 ## `brevio-core pr`
 
-Verify QA gates and generate a pull-request receipt (.brevio/PR_BODY.md).
+Run the QA gates and write a pull-request body from what they found (.brevio/PR_BODY.md).
 
 ```
 brevio-core pr [options] [title]

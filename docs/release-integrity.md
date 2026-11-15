@@ -55,7 +55,7 @@ Work in this order. Write down the time of a step and what you saw, so the notes
 An agent file that says `brevio-core scan` runs whatever the machine has. The form that names the release is:
 
 ```sh
-uvx brevio-core==0.10.0 scan <files>
+uvx brevio-core==0.11.0 scan <files>
 ```
 
 `brevio-core init` writes this form into the marked agent rules in `AGENTS.md`, and `brevio-core init --with hook` writes the

@@ -98,9 +98,11 @@
     "cd CACHE/<owner>__<repo> && python -I -c \"import sys; sys.path.insert(0, sys.argv[1]); from brevio.pipeline import core_cli; raise SystemExit(core_cli.main(sys.argv[2:]))\" TREE scan --fail-on all ."
   ],
   "corpus": {
+    "language": "typescript",
     "name": "ts-react-oss"
   },
   "date": "2026-11-06",
+  "detail": "totals-only",
   "method": {
     "context_lines": 3,
     "export_set": "0.4",
@@ -185,191 +187,61 @@
   },
   "repos": [
     {
-      "files": 267,
-      "hits": {
-        "R13.1": 0,
-        "R18.1": 0,
-        "R18.5": 0,
-        "R2.8": 0,
-        "R5.4": 0,
-        "R6.3": 9,
-        "R9.1": 7,
-        "R9.2": 5
-      },
-      "hits_total": 21,
       "licence": "MIT",
-      "lines": 25599,
       "name": "vercel/swr",
       "sha": "8148ef012fd5b317d1e8ec2da4b2ca0673f63c0f",
       "url": "https://github.com/vercel/swr"
     },
     {
-      "files": 4506,
-      "hits": {
-        "R13.1": 0,
-        "R18.1": 0,
-        "R18.5": 0,
-        "R2.8": 4,
-        "R5.4": 5,
-        "R6.3": 0,
-        "R9.1": 5,
-        "R9.2": 0
-      },
-      "hits_total": 14,
       "licence": "MIT",
-      "lines": 612035,
       "name": "shadcn-ui/ui",
       "sha": "8a3536678a528cc012b9e62484290e79d0be410f",
       "url": "https://github.com/shadcn-ui/ui"
     },
     {
-      "files": 2709,
-      "hits": {
-        "R13.1": 0,
-        "R18.1": 4,
-        "R18.5": 0,
-        "R2.8": 0,
-        "R5.4": 15,
-        "R6.3": 0,
-        "R9.1": 47,
-        "R9.2": 23
-      },
-      "hits_total": 89,
       "licence": "MIT",
-      "lines": 281038,
       "name": "TanStack/query",
       "sha": "284abac02d34f88ceb119c2af3fd3cf400b64a7a",
       "url": "https://github.com/TanStack/query"
     },
     {
-      "files": 4783,
-      "hits": {
-        "R13.1": 0,
-        "R18.1": 0,
-        "R18.5": 0,
-        "R2.8": 0,
-        "R5.4": 0,
-        "R6.3": 2,
-        "R9.1": 227,
-        "R9.2": 68
-      },
-      "hits_total": 297,
       "licence": "MIT",
-      "lines": 548772,
       "name": "TanStack/table",
       "sha": "c14e0221b1e656c7bb35e7b3d4cdf188719a3599",
       "url": "https://github.com/TanStack/table"
     },
     {
-      "files": 1267,
-      "hits": {
-        "R13.1": 0,
-        "R18.1": 0,
-        "R18.5": 0,
-        "R2.8": 8,
-        "R5.4": 1,
-        "R6.3": 0,
-        "R9.1": 96,
-        "R9.2": 48
-      },
-      "hits_total": 153,
       "licence": "MIT",
-      "lines": 170751,
       "name": "trpc/trpc",
       "sha": "6ea3d9873854564198c077df20a1db2f01bc2ae3",
       "url": "https://github.com/trpc/trpc"
     },
     {
-      "files": 2087,
-      "hits": {
-        "R13.1": 0,
-        "R18.1": 0,
-        "R18.5": 0,
-        "R2.8": 14,
-        "R5.4": 0,
-        "R6.3": 9,
-        "R9.1": 10,
-        "R9.2": 36
-      },
-      "hits_total": 69,
       "licence": "MIT",
-      "lines": 671889,
       "name": "facebook/lexical",
       "sha": "dfe058a840e35e1e796bc69ad2335703b004502e",
       "url": "https://github.com/facebook/lexical"
     },
     {
-      "files": 1970,
-      "hits": {
-        "R13.1": 0,
-        "R18.1": 3,
-        "R18.5": 5,
-        "R2.8": 24,
-        "R5.4": 30,
-        "R6.3": 112,
-        "R9.1": 491,
-        "R9.2": 85
-      },
-      "hits_total": 750,
       "licence": "Apache-2.0",
-      "lines": 588630,
       "name": "microsoft/playwright",
       "sha": "5c55bfa2c7a65962eebdaa60c6a51cbd230305f0",
       "url": "https://github.com/microsoft/playwright"
     },
     {
-      "files": 723,
-      "hits": {
-        "R13.1": 0,
-        "R18.1": 1,
-        "R18.5": 2,
-        "R2.8": 3,
-        "R5.4": 6,
-        "R6.3": 0,
-        "R9.1": 67,
-        "R9.2": 38
-      },
-      "hits_total": 117,
       "licence": "MIT",
-      "lines": 231523,
       "name": "excalidraw/excalidraw",
       "sha": "7ded689cad49331167e29fd88b38f38d3736d576",
       "url": "https://github.com/excalidraw/excalidraw"
     },
     {
-      "files": 759,
-      "hits": {
-        "R13.1": 0,
-        "R18.1": 0,
-        "R18.5": 0,
-        "R2.8": 4,
-        "R5.4": 21,
-        "R6.3": 3,
-        "R9.1": 23,
-        "R9.2": 31
-      },
-      "hits_total": 82,
       "licence": "MIT",
-      "lines": 209868,
       "name": "remix-run/react-router",
       "sha": "db80dda076ec9cdcefff480079252fe0c977710e",
       "url": "https://github.com/remix-run/react-router"
     },
     {
-      "files": 55,
-      "hits": {
-        "R13.1": 0,
-        "R18.1": 0,
-        "R18.5": 0,
-        "R2.8": 0,
-        "R5.4": 0,
-        "R6.3": 0,
-        "R9.1": 14,
-        "R9.2": 0
-      },
-      "hits_total": 14,
       "licence": "MIT",
-      "lines": 10626,
       "name": "pmndrs/zustand",
       "sha": "382d29c485e67018c06e75ec7235130d0968522c",
       "url": "https://github.com/pmndrs/zustand"

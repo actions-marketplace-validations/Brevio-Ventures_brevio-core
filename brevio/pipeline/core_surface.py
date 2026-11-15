@@ -19,6 +19,8 @@ from typing import Any
 from brevio.pipeline.code_rules import PR_RULES_122, rule_status
 from brevio.pipeline.code_rules import docs as rule_docs
 from brevio.pipeline.code_rules.details import scanned_by
+from brevio.pipeline.core_diff import git, resolve
+from brevio.pipeline.core_sets import set_module
 
 TREE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))      # the folder that holds ``brevio/``
 NAME = "brevio-core"
@@ -177,3 +179,40 @@ def warn_select(project: Any, paths: Iterable[str], surface: bool, guard_prefix:
     if project is not None and files and not any(project.for_path(p).runs(r) for p in files for r in rules):
         print("brevio-core: warning: the select and ignore settings leave no rule that scan checks, so no finding can come from "
               "this scan; `brevio-core rules --scanned` lists them", file=sys.stderr)
+
+
+def scan_facts(files: Iterable[str], project: Any = None, surface: bool = False) -> dict[str, Any]:
+    """The facts of a scan run that the report states: the rules that ran for the files read, and how many files that is.
+
+    A rule ran when ``brevio-core.toml`` leaves it on for at least one file that was not excluded; with no config every
+    rule of the scan runs. Learned guards are not counted: they are the repository's own, not the tool's rules (stage C5)."""
+    paths = list(files)
+    rules = [*scanned_by("code"), *(scanned_by("dev") if surface else [])]
+    live = [p for p in paths if project is None or not project.for_path(p).excluded]
+    ran = [r for r in rules if live and (project is None or any(project.for_path(p).runs(r) for p in live))]
+    return {"rules_ran": len(ran), "files": len(paths)}
+
+
+def _short(ref: str) -> str:
+    """The 12-digit id git gives ``ref``, or ``""`` when git does not know it (hex only, so safe in a command)."""
+    return git("rev-parse", "--short=12", ref).strip() if ref else ""
+
+
+def facts_for(args: Any, files: Iterable[str], project: Any, seconds: float,
+              installed: Callable[[str], dict[str, list[str]] | None] | None = None, named: Iterable[str] = ()) -> str:
+    """The facts line of this scan run, or ``""`` without ``--facts`` (``scan --format markdown --facts``, stage C5, 2026-11-14).
+
+    The base is the one ``--diff`` resolved; a scan of paths has none. The command that repeats the scan is left out when the
+    version or the base is unknown, or with ``--no-reproduce`` (the Action sets it when ``source`` installs something else).
+    It is also left out when paths were named or ``--allow-new-suppressions`` was given: the command would run another scan."""
+    if not getattr(args, "facts", False):
+        return ""
+    version = package_version(None, installed)
+    base = _short(resolve(args.diff)) if args.diff is not None else ""
+    head = _short("HEAD")
+    facts = scan_facts(files, project, getattr(args, "surface", False))
+    command = ""
+    same_scan = not list(named) and not getattr(args, "allow_new_suppressions", False)
+    if version and base and same_scan and not getattr(args, "no_reproduce", False):
+        command = f"pip install {NAME}=={version} && {NAME} scan --diff {base}" + (" --surface" if getattr(args, "surface", False) else "")
+    return str(set_module("pipeline", "core_markdown").facts_line(version, facts["rules_ran"], facts["files"], seconds, command, base, head))

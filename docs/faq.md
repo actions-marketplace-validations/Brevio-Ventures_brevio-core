@@ -38,12 +38,6 @@ Changing what a rule flags is a code change to the rules, reviewed like any othe
 `scan`, the agent hook and the MCP server use no network and send nothing. The rules make no model call and need no API
 key. The security review page lists what each command reads and runs, and tests check it.
 
-The optional `brevio-core ai` commands are the exception, and you choose it: they send a request to a model or a
-program you connected, after you read the request and answer yes. `explain` and `fix` send the flagged line and the lines
-around it that you allow; `summarize` sends rule IDs, titles and counts; `learn` sends the lines a fix removed. A program you
-connect receives the request on its standard input and may send it elsewhere, which brevio-core does not see. Nothing goes to
-Brevio. See [the `ai` section of the README](https://github.com/Brevio-Ventures/brevio-core/blob/main/README.md#optional-ask-a-model-you-connect).
-
 ## How does it compare with a linter, Semgrep or CodeQL?
 
 It sits beside them. A linter checks style and correctness in the language it knows; Semgrep matches patterns you

@@ -2,25 +2,19 @@
 
 What is planned for the next release, in plain words. Only the next release is listed; later ideas live in
 Discussions. The list changes as work lands, and nothing on it takes a shipped feature away ([GOVERNANCE.md](GOVERNANCE.md)).
+A feature that has shipped is in the [changelog](docs/CHANGELOG.md), not here.
 
 ## Next release
 
-- **A config file.** `brevio-core.toml` at the root and in any folder: choose rules, leave paths out, set warn or error
-  per rule and per path, and extend an organisation policy pinned to a commit. A guide for rolling it out across a
-  team: observe first, then warn on new findings, then block them.
-- **Stable rule IDs.** A rule ID is never reused or renumbered, and a retired rule keeps its ID. A new rule starts as a
-  preview: it reports but does not block, for one minor release.
-- **A precision table.** The scanned rules run over popular open-source TypeScript and React repositories at pinned
-  commits, with the hits per rule, a hand-checked sample and the commands to repeat it. The weakest rules are fixed or
-  retired first.
-- **Fuller docs.** A command reference, a guide to the Action, a guide to writing a rule, a FAQ and a changelog.
-- **One page per coding agent** on wiring the hook into it, and a template repository that starts agent-safe.
-- **A hint after a fix.** When an agent commits a fix, the hook suggests `learn`. It never runs it.
-- **Contributions back without hand work.** An importer brings merged pull requests back into the harness, checks the
-  sign-off and the licence, and a generated contributors list credits everyone.
-- **`up`, opt in.** Sync learned guards and suppression approvals across repositories and teammates, the paid service.
-  It asks first, and shows the exact files before anything leaves your machine ([PRIVACY.md](PRIVACY.md)).
-- **A public benchmark** of the mistakes coding agents repeat, published with its method and data once it has passed a
-  legal review.
+- **A facts line at the end of a scan report.** It names the version, the rules that ran after your config file, the
+  files read and the base. It also gives the time of the run. It is off unless you ask for it, and the Action gets an input for it.
+- **A list of paths a learned guard leaves alone.** A guard meant for application code stops flagging your tests.
+- **Scans that read files one at a time**, so a large folder needs less memory.
+- **Precision by language.** The precision page and the rule pages name the corpus, the scanner and the date, and say
+  "not measured" for a language with no corpus. Hit counts per repository are not published.
+- **Honest output from the pull-request commands.** They print what they read from a file, or say "not run". They say
+  so when git could not give them the diff.
+- **Starter packs described as hand-written**, with the guards tested on a line they must flag and a line they must not.
+- **A lock on Windows** for the call ledger of the optional model command.
 
 Missing something? Ask in Discussions.

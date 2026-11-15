@@ -58,6 +58,38 @@ is tried on your history before it is kept, why a new one only reports, and why 
 - A scan of a whole folder reads the code files it recognises. A guard for another kind of file (a Dockerfile, say) is
   reported by `scan --diff`, by a file you name, and by `learn --check`, not by a folder scan.
 
+## Leaving paths out of a guard
+
+A guard watches the globs in `file_patterns`. A glob has no way to leave a folder out, so a guard meant for application code can
+also flag a test. The optional key `exclude_file_patterns` lists globs the guard does not watch. A path is watched when a
+`file_patterns` glob names it and no `exclude_file_patterns` glob does.
+
+```json
+"file_patterns": ["**/api/*.py"],
+"exclude_file_patterns": ["**/tests/**", "**/conftest.py"]
+```
+
+- The globs are written like the ones in `file_patterns`. They are relative to the repository and use `/` on Linux, macOS and Windows.
+  `*` and `**` match across folders, and `**/` also matches at the top. They are matched the same way by `scan`, `scan --diff`, the
+  agent hook, the MCP `scan` tool, the Action, `learn --check` and the replay that `learn` and `add` print.
+- Case counts in an exclude glob on Linux, macOS and Windows alike. A watched glob keeps its older way, which ignores case on Windows.
+- A glob must be short text on one line. It must not start with `/`, `\` or `~` or a drive letter, or hold `..`, and it
+  may hold a few wildcards. It must hold some text besides wildcards. The list holds a few globs. A list that leaves the guard
+  nothing to watch is not used, and `scan` warns. `learn import` refuses a guard whose list breaks these limits and says why.
+  In a guards file that is already in your repository, `scan` warns by guard name and leaves the bad entry out, so the guard
+  watches more, not less.
+- A guard file without the key works as before.
+- Adding a glob to a live guard is a narrowing: `scan --diff` and the hook report it for review, like a watched path taken
+  out. A glob that matches nothing narrows nothing.
+- `brevio-core.toml` already has what a whole repository needs. Its `exclude` list leaves paths out of the rules and guards in a
+  scan. An `[[overrides]]` table with `ignore = ["guard:*"]` does the same for the guards of some paths. That config is not
+  read by `learn --check`, so use the key for a guard that `learn --check` should also leave alone.
+- An older release does not know the key and does not warn about it. Release `0.9.1` reads `file_patterns` only: its
+  `learn --check` still reports a path the list excludes, and its `scan` does not run guards. Release `0.10.0`
+  also ignores the key, so its `scan` still reports an excluded path. Update before relying on the list in a team where
+  some people run an older release.
+- The agent rule written beside a guard names `file_patterns` in its front matter and does not list the excluded globs.
+
 ## The life of a guard
 
 - **Trial.** A new guard is on trial until the date in `trial_ends`, written when it was kept. After that date it stays on
@@ -87,7 +119,7 @@ is tried on your history before it is kept, why a new one only reports, and why 
   hand and restore the rule file from git.
 - **Review.** `brevio-core scan --diff` (the Action runs it) reports a `suppression` finding for a guard that a change
   removes, switches off without the `dismissed` record that matches the guard it had, narrows (a pattern or a watched path
-  taken out), or puts back on trial from active. The agent hook reports the same for the uncommitted changes when the
+  taken out, or an excluded path added), or puts back on trial from active. The agent hook reports the same for the uncommitted changes when the
   agent is about to stop, and after an edit of the guard file. `--allow-new-suppressions` hides them for a change a person
   reviewed. The record is part of the file: whoever can write the file can write the record, so this is a prompt to
   review, not a lock.
@@ -107,6 +139,8 @@ finding, and a `label` field says in words what it looks for.
 - A guard may carry `file_contains`, a literal checked once against the whole file before the line patterns run. The
   Next.js pack uses it to flag an async page or a `metadata` export only in a file marked `use client`.
   A guard file without the field works as before.
+- The FastAPI blocking-call guard leaves out test folders, `test_*.py`, `*_test.py` and `conftest.py` through `exclude_file_patterns`: a test under an
+  API folder held a sleep and was flagged.
 - A guard file written by an earlier release keeps its old pack guards. Run `brevio-core add <pack>` again to refresh them;
   that also resets the status and counters of the pack's guards.
 
@@ -116,8 +150,9 @@ finding, and a `label` field says in words what it looks for.
 machine and nothing else. It takes no address and no git remote. It does not contact a service.
 
 - A guard is rebuilt from the fields the tool knows. Its status, counters and replay in the other repository are not
-  taken. A pattern that looks like a credential, a pattern that is not run as the expression it reads as, and an ID that
-  is not plain text are refused.
+  taken. These are refused: a pattern that looks like a credential, a pattern that is not run as the expression it reads
+  as, an ID that is not plain text, and an exclude list that breaks the limits above. A valid `exclude_file_patterns` is kept,
+  shown as `except:` and used by the replay.
 - A guard is replayed over the recent history of this repository, and the command prints how many past changes it
   would have flagged here.
 - The command needs a terminal and a typed yes. The guards are written on trial: they report and do not fail a run.
@@ -164,6 +199,7 @@ The file format is a preview and may change; `version` says which one a file has
 | `source_file` | the file the fix changed |
 | `file_patterns` | the globs of the files the guard watches: the fixed file's folder and its extension; for a file at the root, the extension |
 | `patterns` | up to a few removed lines, whitespace folded. A guard hits when a line contains one of them as text. A pattern that starts with `re:`, or holds a regular-expression token such as `.*` or `\s`, is read as a regular expression (the starter packs use them); a regular expression is not run on a long line, and one that repeats a repeat or holds more than a few unbounded repeats is read as plain text, with a warning from the scan |
+| `exclude_file_patterns` | optional: globs the guard does not watch, even when `file_patterns` names them; see "Leaving paths out of a guard" |
 | `match` | `"all"` when a hit needs the whole set of patterns in the lines of one file (the patterns came from one hunk); a guard without the field hits on one pattern, as guards of the first release do |
 | `wrong_hits` | fingerprints of the hits a person named with `learn wrong <id> path:line` |
 | `status` | `trial`, `active` or `off` |
@@ -193,6 +229,6 @@ paths: ["src/api/**/*.ts", "**/*.ts"]
 
 ## Editing guards by hand
 
-The file is plain JSON; edit it like a file in review. Narrow `file_patterns` or remove a pattern that is too general
+The file is plain JSON; edit it like a file in review. Narrow `file_patterns`, add `exclude_file_patterns` for a folder it should leave alone, or remove a pattern that is too general
 (a change that does is reported for review, as above), or delete the entry and its rule file to remove a guard. To
 switch one off with a record, use `learn dismiss`.

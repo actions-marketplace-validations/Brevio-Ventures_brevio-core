@@ -43,8 +43,11 @@ README = "README.md"
 # The language a page's examples are in, for its search title; a plain-text example names none.
 LANGUAGES = {"ts": "TypeScript", "tsx": "React and TypeScript", "py": "Python", "css": "CSS", "json": "package.json",
              "sql": "SQL", "html": "HTML"}      # every JSON example is a package.json
-# Rules that gained a Python check after the judged run (2026-11-13).
-PYTHON_CHECKS = frozenset({"R2.8", "R5.4"})
+# The languages a rule reads, for the figures of its page (the rule's SCOPE says where; 2026-11-13). Every other scanned rule reads
+# JavaScript and TypeScript only. The names are those the precision run prints.
+PYTHON_ONLY = frozenset({"R5.5", "R10.1"})
+PYTHON_TOO = frozenset({"R2.8", "R5.4", "R13.1"})
+LANGUAGE_NAMES = {"typescript": "TypeScript and JavaScript", "python": "Python"}
 RELATED = 4         # related rules linked from a page: the next ones of its group, in catalogue order
 
 
@@ -145,23 +148,54 @@ def silence_text(rule_id: str) -> str:
     return "\n\n".join(lines)
 
 
+def languages_of(rule_id: str) -> tuple[str, ...]:
+    """The languages whose figures a rule page shows: where the rule reads (``SCOPE``), among the languages with a corpus."""
+    if rule_id in PYTHON_ONLY:
+        return ("python",)
+    return ("typescript", "python") if rule_id in PYTHON_TOO else ("typescript",)
+
+
+def figure(rule_id: str, language: str) -> dict[str, object]:
+    """A rule's figure for one language, from ``measured`` alone. ``status`` is ``measured`` (counts, share and interval follow),
+    ``no hit`` (the corpus had nothing to judge), ``not judged`` (a sample is drawn and not all of it has a verdict and a
+    reviewer) or ``not measured`` (no corpus of that language has a figure for the rule). When two corpora share a language the
+    newer run is taken."""
+    names = [n for n, c in measured.CORPORA.items() if c["language"] == language and n in measured.FIGURES.get(rule_id, {})]
+    if not names:
+        return {"status": "not measured", "language": language}
+    name = max(names, key=lambda n: (str(measured.CORPORA[n]["date"]), n))
+    got, corpus = measured.FIGURES[rule_id][name], measured.CORPORA[name]
+    status = "no hit" if not got["hits"] else "measured" if got["precision"] is not None else "not judged"
+    return {"status": status, "language": language, "corpus": name, **{k: v for k, v in corpus.items() if k != "language"}, **got}
+
+
+def _figure_line(rule_id: str, language: str) -> str:
+    got, label = figure(rule_id, language), LANGUAGE_NAMES.get(language, language)
+    if got["status"] == "not measured":
+        return f"- {label}: not measured. No corpus of this language has a judged sample of this rule's hits."
+    detail = f"corpus {got['corpus']}, scanner {got['scanner']}, run on {got['date']}"       # no nested quotes: Python 3.10 reads this file
+    where = "C" + detail[1:]
+    if got["status"] == "no hit":
+        return f"- {label}: not measured. The rule had no hit in the corpus ({detail}), so there was nothing to judge."
+    if got["status"] == "not judged":
+        return f"- {label}: not measured yet. A sample of its hits was drawn ({detail}); not all of it has a verdict and a reviewer."
+    who = f"Judged by {got['reviewer']}." if got["reviewer"] else "The results do not record who judged."
+    return (f"- {label}: {got['real']} of {got['judged']} judged hits were real "
+            f"({got['interval']}: {got['low']:.2f} to {got['high']:.2f}; {got['hits']} hits in the corpus). {where}. {who}")
+
+
 def precision_text(rule_id: str) -> str:
-    """What the last judged run says about a rule, read from ``measured`` alone: that module is generated from
-    ``precision.json``, so a page shows no figure the file does not hold (improvement plan 2b, 2026-11-12)."""
-    fig = measured.RULES.get(rule_id)
-    where = f"corpus {measured.RUN['corpus']}, run on {measured.RUN['date']}"
-    if fig is None:
-        return "Not measured. No judged sample of this rule's hits exists."
-    python = (" The Python checks of this rule were added after this run, so they are not measured."
-              if rule_id in PYTHON_CHECKS else "")
-    if not fig["hits"]:
-        return f"Not measured: the rule had no hit in the corpus ({where}), so there was nothing to judge."
-    share = fig["precision"]
-    if share is None:
-        return f"Not measured yet: a sample of its hits was drawn ({where}) and not all of it is judged."
-    return (f"{round(share * 100)}% of {fig['judged']} judged hits were real, on human-written code, one "
-            f"reviewer ({where}). That is not how often the rule is right on code an agent wrote. See `docs/precision.md` "
-            "in the brevio-core repository for the verdicts, the commands to run it again and how to dispute one." + python)
+    """What the judged runs say about a rule, one line for each language it reads, read from ``measured`` alone: that module
+    is generated from the ``precision.json`` of each corpus, so a page shows no figure those files do not hold. A language with
+    no corpus is "not measured"."""
+    languages = languages_of(rule_id)
+    if not any(figure(rule_id, lang)["status"] != "not measured" for lang in languages):
+        return "Not measured in any language. No judged sample of this rule's hits exists."
+    return ("\n".join(_figure_line(rule_id, lang) for lang in languages)
+            + "\n\nA figure is for human-written code in the language and corpus named. It does not say how often the rule is right "
+            "on code an agent wrote, or in another language. The scanner named may differ from yours. See `docs/precision.md` "
+            "in the brevio-core repository for the "
+            "verdicts, the commands to run it again and how to dispute one.")
 
 
 def _fence(lang: str, body: str) -> str:

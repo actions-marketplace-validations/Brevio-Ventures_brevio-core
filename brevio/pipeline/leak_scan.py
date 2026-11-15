@@ -48,12 +48,19 @@ def allowed_urls(org: str | None = None, extra: tuple[str, ...] = ()) -> tuple[s
     return ALLOWED_URLS + ((f"github.com/{org.lower()}", f"{org.lower()}.github.io") if org else ()) + extra
 
 
+def is_quoted_data(rel: str) -> bool:
+    """A judged sample the precision run wrote: the two in ``docs/``, and those of another corpus in a folder of ``docs/``."""
+    parts = rel.split("/")
+    return rel in QUOTED_DATA or (len(parts) == 3 and parts[0] == "docs" and parts[2] in {os.path.basename(q) for q in QUOTED_DATA})
+
+
 def corpus_urls(root: str) -> tuple[str, ...]:
     """``github.com/<owner>/<repo>`` (lower case) for each repository the tree's precision corpus names, or ``()``."""
     try:
-        with open(os.path.join(root, CORPUS_FILE), encoding="utf-8") as fh:
-            repos = json.load(fh)["repos"]
-        names = [r.get("name") for r in repos if isinstance(r, dict)]
+        with open(os.path.join(root, CORPUS_FILE), encoding="utf-8-sig") as fh:
+            doc = json.load(fh)
+        corpora = doc["corpora"] if "corpora" in doc else [doc]      # one corpus at the top level is the older shape
+        names = [r.get("name") for c in corpora for r in c["repos"] if isinstance(r, dict)]
     except (OSError, ValueError, KeyError, TypeError, AttributeError):
         return ()
     return tuple(f"github.com/{n.lower()}" for n in names if isinstance(n, str) and re.fullmatch(r"[\w.-]+/[\w.-]+", n))
@@ -127,7 +134,9 @@ def bad_internal_paths(text: str, root: str) -> list[str]:
 
 
 def read_text(path: str) -> str | None:
-    """The file's text, or None for a binary file."""
+    """The file's text, or None for a binary file or a link whose target is gone (it holds no text; review 2026-11-14)."""
+    if os.path.islink(path) and not os.path.exists(path):
+        return None
     with open(path, "rb") as fh:
         data = fh.read()
     return None if b"\0" in data else data.decode("utf-8", errors="replace")
@@ -151,7 +160,7 @@ def scan_tree(root: str, org: str | None = None) -> list[str]:
     extra = corpus_urls(root)
     problems: list[str] = []
     for rel in tree_files(root):
-        text = None if rel in QUOTED_DATA else read_text(os.path.join(root, rel))
+        text = None if is_quoted_data(rel) else read_text(os.path.join(root, rel))
         if text is None:
             continue
         file_org = org or ("example-org" if rel.startswith("tests/") else None)

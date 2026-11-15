@@ -113,5 +113,18 @@ class TestThePrecisionFiles(unittest.TestCase):
             self.assertEqual(leak_scan.scan_tree(d), [f"docs/notes.jsonl: url: {HTTPS}example.org/issue/7"])
 
 
+class TestALinkWithNoTarget(unittest.TestCase):
+    def test_a_link_whose_target_is_gone_is_skipped_and_the_rest_is_still_read(self):
+        """Review 2026-11-14: the scan stopped with a traceback on such a link."""
+        with tempfile.TemporaryDirectory() as d:
+            try:
+                os.symlink("nowhere.py", os.path.join(d, "dangling.py"))
+            except (OSError, NotImplementedError):
+                self.skipTest("this system makes no links")
+            with open(os.path.join(d, "notes.md"), "w", encoding="utf-8") as fh:
+                fh.write(f"see {HTTPS}example.org/x\n")
+            self.assertEqual(leak_scan.scan_tree(d), [f"notes.md: url: {HTTPS}example.org/x"])
+
+
 if __name__ == "__main__":
     unittest.main()

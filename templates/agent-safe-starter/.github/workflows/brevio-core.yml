@@ -1,4 +1,4 @@
-# From the agent-safe starter template: the workflow `brevio-core init` writes, pinned to brevio-core 0.10.0.
+# From the agent-safe starter template: the workflow `brevio-core init` writes, pinned to brevio-core 0.11.0.
 name: brevio-core
 on:
   pull_request:
@@ -16,7 +16,7 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           fetch-depth: 0
-      - uses: Brevio-Ventures/brevio-core@v0.10.0
+      - uses: Brevio-Ventures/brevio-core@v0.11.0
         with:
-          package-version: 0.10.0
+          package-version: 0.11.0
           sarif: true

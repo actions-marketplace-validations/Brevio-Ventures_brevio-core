@@ -39,7 +39,7 @@ inputs:
   package-version:
     description: 'brevio-core version to install; the default is the release of this Action, "latest" takes the newest'
     required: false
-    default: '0.10.0'
+    default: '0.11.0'
   allow-new-suppressions:
     description: 'true when a person reviewed the ignore comments and baseline entries this change adds (the scan then does not report them); keep false for a change nobody reviewed'
     required: false
@@ -48,6 +48,10 @@ inputs:
     description: 'Test custody on the pull request (preview): off, report (the R20 findings go in the comment and do not fail the check) or fail (they fail it)'
     required: false
     default: 'off'
+  facts:
+    description: 'End the report with one line of the facts of this run (version, rules that ran, files read, base, head, time) when true; needs a package that knows --facts, else a notice says so'
+    required: false
+    default: 'false'
   paths:
     description: 'Files or folders to scan, separated by spaces (one per line when a name holds spaces), relative to working-directory; empty: the whole change'
     required: false
@@ -75,6 +79,7 @@ runs:
         EVENT: ${{ github.event_name }}
         CUSTODY: ${{ inputs.custody }}
         ALLOW_NEW: ${{ inputs.allow-new-suppressions }}
+        FACTS: ${{ inputs.facts }}
       run: |
         case "$EVENT" in
           pull_request|merge_group|push) ;;
@@ -88,6 +93,10 @@ runs:
         case "$ALLOW_NEW" in
           true|false) ;;
           *) echo "::error title=brevio-core::allow-new-suppressions is true or false, not $ALLOW_NEW"; exit 2 ;;
+        esac
+        case "$FACTS" in
+          true|false) ;;
+          *) echo "::error title=brevio-core::facts is true or false, not $FACTS"; exit 2 ;;
         esac
     - name: brevio-core / set up Python
       uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
@@ -116,6 +125,8 @@ runs:
         FOOTER: ${{ inputs.footer }}
         ALLOW_NEW: ${{ inputs.allow-new-suppressions }}
         SCAN_PATHS: ${{ inputs.paths }}
+        FACTS: ${{ inputs.facts }}
+        PKG_SOURCE: ${{ inputs.source }}
       run: |
         base="$BASE_INPUT"
         if [ -z "$base" ]; then
@@ -136,6 +147,18 @@ runs:
         quiet=""; if [ "$FOOTER" = "false" ]; then quiet="--no-upgrade-line"; fi
         # allow-new-suppressions: a person reviewed the ignore comments and baseline entries of this change (revisit D25).
         allow=""; if [ "$ALLOW_NEW" = "true" ]; then allow="--allow-new-suppressions"; fi
+        # facts: the flag only when the installed package knows it, as an older one ends with exit code 2 on an unknown flag.
+        # With a source the version says little about what ran, so the line leaves out the command that repeats the scan (2026-11-14, C5).
+        facts=()
+        if [ "$FACTS" = "true" ]; then
+          # The help is read into a variable first: under pipefail, grep -q ending the pipe early could fail the test.
+          scan_help="$(brevio-core scan --help 2> /dev/null || true)"
+          if [[ "$scan_help" == *--facts* ]]; then
+            facts=(--facts); if [ -n "$PKG_SOURCE" ]; then facts+=(--no-reproduce); fi
+          else
+            echo "::notice title=brevio-core::facts needs a newer package-version; the report has no facts line"
+          fi
+        fi
         # paths: one per line when the value has a line break (a name may then hold spaces), else split on spaces; never a glob.
         targets=()
         if [[ "$SCAN_PATHS" == *$'\n'* ]]; then
@@ -145,7 +168,7 @@ runs:
         fi
         out="$RUNNER_TEMP/brevio-core.md"
         err="$RUNNER_TEMP/brevio-core.err"
-        brevio-core scan --diff "$base" --fail-on "$FAIL_ON" --format markdown --rules-url "$rules_url" $quiet $allow \
+        brevio-core scan --diff "$base" --fail-on "$FAIL_ON" --format markdown --rules-url "$rules_url" $quiet $allow "${facts[@]}" \
           --sarif brevio-gate.sarif "${targets[@]}" > "$out" 2> "$err" && rc=0 || rc=$?
         # The scan's own messages quote code under review: no line of them may act as a workflow command.
         stop="brevio-core-$(date +%s%N)"
@@ -235,7 +258,8 @@ runs:
 
         report = read(os.path.join(tmp, "brevio-core.md")).strip()
         if env.get("NOTHING") == "true":
-            report = "### brevio-core\n\nNothing to scan: this change adds no lines in the files the rules read."
+            facts = [ln for ln in report.splitlines() if ln.startswith("Facts of this run:")]     # the line says how little was read
+            report = "### brevio-core\n\nNothing to scan: this change adds no lines in the files the rules read." + "".join("\n\n" + ln for ln in facts)
         elif not report:
             report = f"### brevio-core\n\nThe scan stopped with exit code {env.get('RC') or '?'}; the job log says why."
         custody_mode = env.get("CUSTODY", "off")

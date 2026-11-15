@@ -202,30 +202,9 @@ STATUS_REASONS: dict[str, str] = {
                     "this rule, so no scan fails on it. `brevio-core check` reports it and exits 1 when it does."),
 }
 # A line for the Rules section of the next release notes about a rule, for a change the ID file cannot show: findings
-# that moved to another ID before the first release. Emptied when the release that carries them is out.
-RULE_NOTES: dict[str, str] = {
-    "R2.8": "New ID for the eval, new Function and dangerouslySetInnerHTML findings, which builds before 0.6.0 reported "
-            "as R2.5 (the SSRF and timeout guard, which brevio-core scan does not check); name R2.8 in an ignore "
-            "comment or brevio-core.toml for them. Since 0.10.0 it also flags eval and exec on a non-literal in Python, "
-            "and eval in .mjs and .cjs files.",
-    "R5.4": "Since 0.10.0 a bare except that re-raises is not flagged, and an except Exception handler that only passes is.",
-    "R10.1": "The fetch and axios check is R10.9, a new preview rule; R10.1 stays the Python requests rule.",
-    "R10.9": "New, preview: a fetch or axios call with no options argument. R10.1 stays the Python requests rule.",
-    "R13.1": "A secret-named NEXT_PUBLIC_, VITE_ or REACT_APP_ variable now gets its own message; the ID and the finding "
-             "are the same.",
-    "R16.2": "A folder scan and a diff scan now read package.json, and a minified package.json is read too.",
-    "R18.2": "The scan checks target=\"_blank\" links without rel=\"noopener noreferrer\", as 0.9.1 did; the form-label "
-             "rule in the title has no scanner.",
-    "R20.1": "New ID for the findings about a test file that was deleted or renamed to a file that is no test. "
-             "Builds up to 0.9.1 printed them as R6.5, which names the regression-test rule.",
-    "R20.2": "New ID for the findings about a test file with fewer tests or assertions than its base. "
-             "Builds up to 0.9.1 printed them as R6.5.",
-    "R20.3": "New ID for the findings about an added skip or focus marker. Builds up to 0.9.1 printed them as R6.5.",
-    "R20.4": "New ID for the findings about an added assertion that is always true. "
-             "Builds up to 0.9.1 printed them as R6.5.",
-    "R20.5": "New ID for the findings about an empty test block. Builds up to 0.9.1 printed them as R6.1, "
-             "which names the rule about tests that import no code under test.",
-}
+# that moved to another ID before the first release. Emptied when the release that carries them is out: 0.10.0 is out
+# (2026-11-13), so the table is empty until a change of the next release needs a line.
+RULE_NOTES: dict[str, str] = {}
 
 
 def rule_status(rule_id: str) -> str:

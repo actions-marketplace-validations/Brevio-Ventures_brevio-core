@@ -433,7 +433,10 @@ PIPE = "brevio/pipeline"
 AI_COMMAND = f"{PIPE}/core_" + "ai.py"
 AI_VERIFY = f"{PIPE}/core_ai_" + "verify.py"
 PURE_AI = (f"{PIPE}/core_ai_state.py", AI_VERIFY)   # no network, so never the transport
-LOADER = "brevio/pipeline/core_cli.py"      # loads ``core_ai`` by name, to register the command; nothing else may name it
+LOADER = "brevio/pipeline/core_sets.py"      # loads ``core_ai`` by name, to register the command; nothing else may name it
+# The loader was split in two on 2026-11-13: ``core_sets`` finds the modules and builds the table, ``core_cli`` still asks
+# for the table and holds the constants of the modules it loads itself. No other module joins them.
+LOADERS = (LOADER, "brevio/pipeline/core_cli.py")
 
 
 def _static_imports(tree):
@@ -473,7 +476,7 @@ def ai_names_outside_ai(modules=None):
     for mod in (_modules() if modules is None else modules):
         if os.path.basename(mod.rel).startswith("core_ai"):
             continue
-        constants = {id(n.value) for n in mod.tree.body if mod.rel == LOADER and isinstance(n, ast.Assign)
+        constants = {id(n.value) for n in mod.tree.body if mod.rel in LOADERS and isinstance(n, ast.Assign)
                      and len(n.targets) == 1 and isinstance(n.targets[0], ast.Name) and n.targets[0].id.endswith("_MODULE")}
         for node in ast.walk(mod.tree):
             if (isinstance(node, ast.Constant) and isinstance(node.value, str) and AI_NAME.match(node.value)
@@ -506,7 +509,7 @@ def ai_loader_uses_outside_the_loader(modules=None):
     ``ai`` is run (the claims check, 2026-11-12): nothing else may reach it through the loader."""
     out = []
     for mod in (_modules() if modules is None else modules):
-        if mod.rel == LOADER or os.path.basename(mod.rel).startswith("core_ai"):
+        if mod.rel in LOADERS or os.path.basename(mod.rel).startswith("core_ai"):
             continue
         for node in ast.walk(mod.tree):
             if isinstance(node, ast.ImportFrom):

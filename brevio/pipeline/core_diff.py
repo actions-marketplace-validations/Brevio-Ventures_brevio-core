@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 import re
 import subprocess
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable, Iterator, Mapping
 
 from brevio.pipeline.rule_host import GIT
 
@@ -30,17 +30,70 @@ LONG_LINE = 500         # a file whose first two lines are longer than this is m
 MAX_BYTES = 1_000_000
 
 
+def _readable(path: str) -> str:
+    """``path`` as it can be read: a diff scan names files from the git root, so a relative one missing here is taken from there."""
+    if not os.path.exists(path) and not os.path.isabs(path):
+        return os.path.join(git("rev-parse", "--show-toplevel").strip() or ".", path)
+    return path
+
+
 def read(path: str) -> list[tuple[int, str]]:
     """The numbered lines of ``path``; a diff scan names files from the git root, so one missing here is read from there."""
-    if not os.path.exists(path) and not os.path.isabs(path):
-        path = os.path.join(git("rev-parse", "--show-toplevel").strip() or ".", path)
+    return _read_resolved(_readable(path))
+
+
+def _read_resolved(path: str) -> list[tuple[int, str]]:
+    """The numbered lines of ``path`` as it stands (see ``_readable``); nothing when it is too big or cannot be read."""
     try:
         if os.path.getsize(path) > MAX_BYTES:
             return []
         with open(path, encoding="utf-8", errors="ignore") as fh:
-            return list(enumerate(fh.read().splitlines(), 1))
+            text = fh.read(MAX_BYTES + 1)       # a device or a pseudo-file may report a size of 0 and never end
+        return [] if len(text) > MAX_BYTES else list(enumerate(text.splitlines(), 1))
     except OSError:
         return []
+
+
+def long_head(path: str) -> bool:
+    """One of the first two lines of ``path`` is longer than ``LONG_LINE``, found as ``read`` would find it but from
+    the start of the file only: minified or bundled output. A file over ``MAX_BYTES`` or one that cannot be read is not."""
+    try:
+        if os.path.getsize(path) > MAX_BYTES:
+            return False
+        with open(path, encoding="utf-8", errors="ignore") as fh:
+            head = fh.read(2 * LONG_LINE + 8)       # two lines of at most LONG_LINE characters, and their separators, fit
+    except OSError:
+        return False
+    return any(len(text) > LONG_LINE for text in head.splitlines()[:2])
+
+
+class FileLines(Mapping[str, list[tuple[int, str]]]):
+    """The numbered lines of each file of a scan, read when asked for and not kept (2026-11-13, bounded memory).
+
+    A folder scan names thousands of files; holding every file's lines made memory grow with the folder. This mapping holds
+    the shown path of each file and the path to read it from, so a pass over the files holds one file's lines at a time.
+    It answers as the dict ``collect_files`` used to return: same keys in the same order, same lines for a key.
+    ``read`` finds a file that was changed since it was named as it is now."""
+
+    def __init__(self, paths: Mapping[str, str], resolved: bool = False) -> None:
+        # Resolved once, here, so a dangling link or a deleted file does not ask git again on every pass over the files.
+        self._paths = dict(paths) if resolved else {k: _readable(v) for k, v in paths.items()}
+
+    def __getitem__(self, key: str) -> list[tuple[int, str]]:
+        return _read_resolved(self._paths[key])
+
+    def __contains__(self, key: object) -> bool:
+        return key in self._paths       # the default would read the file to answer
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._paths)
+
+    def __len__(self) -> int:
+        return len(self._paths)
+
+    def where(self, keep: Callable[[str], bool]) -> FileLines:
+        """The files whose shown path ``keep`` accepts, still read when asked."""
+        return FileLines({k: v for k, v in self._paths.items() if keep(k)}, resolved=True)
 
 
 def bundled(path: str) -> bool:

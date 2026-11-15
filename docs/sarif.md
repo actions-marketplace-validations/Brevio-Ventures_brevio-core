@@ -43,7 +43,7 @@ One run, with the tool's rules and one result per finding:
 | --- | --- |
 | `tool.driver.rules` | the rules of the catalogue, with the one line of each as `shortDescription`, so a viewer can name a rule ID; also `suppression` and `guard:<id>` when a result uses them |
 | `tool.driver.version` | the version of the release that wrote the log; left out when the tool is not a release |
-| `rules[].helpUri` | in a release whose source is on GitHub, the page of the rule at the tag of that version, `https://github.com/Brevio-Ventures/brevio-core/blob/v0.10.0/docs/rules/<ID>.md`; left out otherwise |
+| `rules[].helpUri` | in a release whose source is on GitHub, the page of the rule at the tag of that version, `https://github.com/Brevio-Ventures/brevio-core/blob/v0.11.0/docs/rules/<ID>.md`; left out otherwise |
 | `ruleIndex` | the position of the result's rule in `tool.driver.rules` |
 | `ruleId` | the rule ID, such as `R9.2`; its page is `rules/<ID>` on this site |
 | `level` | `error`, or `warning` for a rule `brevio-core.toml` sets to `warn` |

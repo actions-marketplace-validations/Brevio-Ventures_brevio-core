@@ -14,7 +14,6 @@ from brevio.growth.geo_audit import rubric
 from brevio.pipeline import dev_rules
 from brevio.pipeline.code_rules import (
     PR_RULES_122,
-    RULE_NOTES,
     details,
     docs,
     is_test_path,
@@ -562,10 +561,11 @@ class TestRuleWordsMatchWhatIsChecked(unittest.TestCase):
         self.assertIn("What it reads: Python only", page)
         self.assertIn("R10.9 covers fetch and axios", page)
 
-    def test_a_rule_with_a_python_check_added_after_the_precision_run_says_it_is_not_measured_there(self):
+    def test_a_rule_that_reads_python_says_python_is_not_measured_until_a_python_corpus_has_a_figure(self):
+        # Changed on purpose (2026-11-13): the line about "Python checks added after this run" gave way to a line per language.
         for rid in ("R2.8", "R5.4"):
-            self.assertIn("Python checks of this rule were added after this run", docs.precision_text(rid), rid)
-        self.assertNotIn("Python checks", docs.precision_text("R9.1"))
+            self.assertIn("- Python: not measured.", docs.precision_text(rid), rid)
+        self.assertNotIn("Python", docs.precision_text("R9.1"))
 
     def test_the_pages_of_r6_1_and_r6_5_point_to_the_test_custody_ids(self):
         """D34, the pointer line only: the ignore alias is another change."""
@@ -576,11 +576,11 @@ class TestRuleWordsMatchWhatIsChecked(unittest.TestCase):
         self.assertIn("NEXT_PUBLIC_", docs.render("R13.1"))
 
     def test_every_extension_the_r2_8_scope_and_note_name_is_read_by_a_folder_scan(self):
-        """B2 (2026-11-13): the 0.10.0 note said R2.8 reads eval in .mts and .cts files, but the folder scan and the diff scan read
+        """B2 (2026-11-13): the 0.10.0 note (cleared since the release, so the rule page is read) said R2.8 reads eval in .mts and .cts files, but the folder scan and the diff scan read
         neither extension (the engine does, the file list does not), so a user of 0.9.1 would have been told of a check that
         never ran. The note and the page may name only extensions that a scan of a folder reports."""
         named = set(re.findall(r"\.[cm]?[jt]sx?\b", details.SCOPE["R2.8"].split(":")[0]))
-        named |= set(re.findall(r"\.[cm]?[jt]s\b", RULE_NOTES["R2.8"]))
+        named |= set(re.findall(r"\.[cm]?[jt]s\b", docs.render("R2.8")))      # the note of 0.10.0 is cleared; the page says it
         self.assertIn(".mjs", named)
         with tempfile.TemporaryDirectory() as d:
             for ext in sorted(named):

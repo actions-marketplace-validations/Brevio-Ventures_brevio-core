@@ -9,15 +9,6 @@ brevio-core collects nothing about you or your code. `scan`, the agent hook and 
 nothing. No command counts its use or reports it anywhere, and there is no setting to turn that on.
 [SECURITY-REVIEW.md](SECURITY-REVIEW.md) lists what each command reads, writes and sends.
 
-`brevio-core ai` is a separate, optional command group. It sends a request only after you have connected a model or a
-program of your own, read the request it prints and answered yes. `explain` and `fix` send the rule's text, the flagged line,
-the lines around it that you allow and the file's extension. `summarize` sends rule IDs, rule titles and the number of findings
-per rule, and no source line and no file name. `learn` sends the lines a fix removed with runs of spaces folded to one, and the file's extension.
-The request goes to the address you connected or, with a command connector, to the standard input of a program you named; that
-program may send it elsewhere, which brevio-core does not see. Nothing goes to Brevio, and the count of calls is a file of your
-own outside the repository. [The security review](SECURITY-REVIEW.md#the-ai-commands-optional) lists the checks made before a
-request.
-
 Local trap-to-fix episode memory written by `brevio-core brief --record` stays on disk in `.brevio/file_memory.json`.
 `brevio-core up` only inspects local `.brevio/` files to preview what a team sync would share, making zero network calls.
 
@@ -57,12 +48,12 @@ nothing and makes no link. When the sending forms ship, each one shows a prompt 
 anything leaves your machine, the answer defaults to no, and they never take the answer from an agent: the agent hook
 and the MCP server cannot run them. In a run with no terminal to ask in, they stop and say how to give consent.
 
-`share` turns a `gain` receipt into a public link:
+`share` would turn the counts that `gain` prints into a public link. `gain` itself prints no link:
 
 ```
-brevio-core share makes this receipt public at a link anyone can open:
+brevio-core share makes these counts public at a link anyone can open:
 
-  <the receipt, exactly as it will be published>
+  <the counts, exactly as they will be published>
 
 It holds counts only: no code, no file names and no repository name.
 Make it public? Type yes to go on, anything else to stop:

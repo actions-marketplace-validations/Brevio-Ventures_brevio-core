@@ -20,7 +20,7 @@ public repositories the precision run measures, and the documents' own links.
 
 ## brevio.pro
 
-- `https://brevio.pro`: `README.md`, `brevio/pipeline/gates/agent_skill.py`, `pyproject.toml`
+- `https://brevio.pro`: `README.md`, `pyproject.toml`
 
 ## github.com
 
@@ -34,7 +34,7 @@ public repositories the precision run measures, and the documents' own links.
 - `https://github.com/Brevio-Ventures/brevio-core/blob/main/SECURITY-REVIEW.md#the-ai-commands-optional`: `README.md (sections the release writes)`
 - `https://github.com/Brevio-Ventures/brevio-core/blob/main/SECURITY-REVIEW.md#what-each-command-sends-over-the-network`: `docs/install-from-a-mirror.md`
 - `https://github.com/Brevio-Ventures/brevio-core/blob/main/SECURITY.md`: `docs/release-integrity.md`
-- `https://github.com/Brevio-Ventures/brevio-core/blob/v0.10.0/docs/rules/`: `docs/sarif.md`
+- `https://github.com/Brevio-Ventures/brevio-core/blob/v0.11.0/docs/rules/`: `docs/sarif.md`
 - `https://github.com/Brevio-Ventures/brevio-core/discussions`: `.github/ISSUE_TEMPLATE/config.yml`, `README.md`, `SUPPORT.md`
 - `https://github.com/Brevio-Ventures/brevio-core/issues`: `pyproject.toml`
 - `https://github.com/Brevio-Ventures/brevio-core/pull/11`: `CONTRIBUTORS.md`
@@ -56,10 +56,6 @@ public repositories the precision run measures, and the documents' own links.
 ## glama.ai
 
 - `https://glama.ai/mcp/schemas/server.json`: `glama.json`
-
-## img.shields.io
-
-- `https://img.shields.io/badge/checked%20by-brevio--core-blue`: `brevio/pipeline/core_init.py`
 
 ## schema.org
 

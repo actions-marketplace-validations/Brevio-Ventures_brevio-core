@@ -17,7 +17,7 @@ It shows every file it would write as a diff and asks first (`--dry-run` writes 
 | `.cursor/hooks.json` | a `postToolUse` hook on `Write` and a `stop` hook, both running `brevio-core hook run --client cursor` |
 | `.cursor/rules/brevio-core.mdc` | when to run brevio-core and how to read a finding |
 | `.cursor/rules/brevio-core-agents.mdc` | the same rules as the `AGENTS.md` block, applied to every request |
-| `.cursor/mcp.json` | the MCP server, `uvx brevio-core==0.10.0 mcp` |
+| `.cursor/mcp.json` | the MCP server, `uvx brevio-core==0.11.0 mcp` |
 
 It also writes the pull-request workflow, the `AGENTS.md` block and a baseline, as for every client. The hook and MCP
 files are personal: `init` lists them in git's local exclude file, so they are not committed. To wire only the hook,
@@ -36,7 +36,7 @@ The tools are `scan`, `explain`, `list_rules`, `learn` and, from release 0.3, `f
 this in `.cursor/mcp.json`:
 
 ```json
-{ "mcpServers": { "brevio-core": { "command": "uvx", "args": ["brevio-core==0.10.0", "mcp"] } } }
+{ "mcpServers": { "brevio-core": { "command": "uvx", "args": ["brevio-core==0.11.0", "mcp"] } } }
 ```
 
 `scan`, the agent hook and the MCP server use no network and send nothing.
