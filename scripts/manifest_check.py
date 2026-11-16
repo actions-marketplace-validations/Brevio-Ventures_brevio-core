@@ -25,7 +25,8 @@ RELEASE_ONLY = ("MANIFEST.json", "VERSION", "RELEASE.md", "IMPORTED", "CONTRIBUT
 
 
 def _git(*args: str) -> subprocess.CompletedProcess:
-    return subprocess.run(["git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", *args],
+    return subprocess.run(["git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false",
+                           "-c", "protocol.ext.allow=never", *args],
                           capture_output=True, text=True, timeout=120)
 
 

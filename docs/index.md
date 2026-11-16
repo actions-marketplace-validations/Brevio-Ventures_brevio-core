@@ -3,6 +3,11 @@
 Catches the mistakes coding agents repeat before they merge: a pull-request gate with no model call and no API key.
 `scan`, the agent hook and the MCP server use no network and send nothing.
 
+The optional `brevio-core ai` commands call a model or a program you connect, after you answer yes. They send the
+request they print, lines of your code or rule IDs and counts, to that address or to the standard input of that program, and
+nothing goes to Brevio: see the [README](https://github.com/Brevio-Ventures/brevio-core/blob/main/README.md#optional-ask-a-model-you-connect) and the
+[security review](https://github.com/Brevio-Ventures/brevio-core/blob/main/SECURITY-REVIEW.md#the-ai-commands-optional).
+
 | In Plain English (For Anyone) | Technical Contract (For Engineers) |
 | --- | --- |
 | **What it does:** Checks code changes for common AI coding mistakes before a pull request merges. `scan --fix` rewrites the few rules that have one correct fix (`--dry-run` shows the diff first).<br>**When to use it:** On your laptop next to your coding agent, or in GitHub Actions on a pull request. | **CLI:** `brevio-core scan`, `brevio-core check`, `brevio-core task` (`connect`, `plan`, `build`, `qa`, `pr`)<br>**Catalogue:** 129 rules (14 scanned, 115 documented)<br>**Exit Codes:** The exit code is 0 when nothing is found, 1 when not. |
@@ -12,6 +17,7 @@ Catches the mistakes coding agents repeat before they merge: a pull-request gate
 - [Command reference](commands.md): every command and option (`scan`, `check`, `connect`, `plan`, `build`, `qa`, `pr`, `task`, `init --specs`), generated from the code.
 - [The GitHub Action](action.md): inputs, permissions, events, merge queues and pinning to a commit.
 - [Questions people ask](faq.md): why Python, why one line at a time, why an agent's ignore comment does not count, how it compares.
+- [See it work](try-it.md): the README's throwaway repository with what the commands print, and [the report the Action posts](example-comment.md).
 - [Changelog](CHANGELOG.md)
 
 ## Track 2: Rules & Auto-Fix

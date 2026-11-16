@@ -107,8 +107,8 @@ def collect_files(paths: Iterable[str]) -> Numbered:
 _DEV_FINDING = re.compile(r"^- (?P<path>.+?):(?P<line>\d+) \[(?P<rule>R\d+\.\d+)\b[^\]]*\]: (?P<msg>.*)$")
 
 
-def scan(files: Numbered, proj: Any = None) -> list[str]:
-    """Findings (``path:line: [rule] message``) for the given numbered lines.
+def scan(files: Numbered, proj: Any = None, wider: bool = True) -> list[str]:
+    """Findings (``path:line: [rule] message``) for the given numbered lines (``wider``: see ``code_rules.scan_lines``).
 
     A deprecated rule reports nothing. With ``brevio-core.toml`` (the 0.6 set, ``proj`` or read here) an excluded file
     is not scanned, and a rule the config turns off for a file reports nothing there."""
@@ -116,18 +116,18 @@ def scan(files: Numbered, proj: Any = None) -> list[str]:
     found: list[str] = []
     for rel in sorted(files):
         if proj is None or not proj.for_path(rel).excluded:
-            found += scan_lines(rel, files[rel])
+            found += scan_lines(rel, files[rel], wider)
     guards = set_module("pipeline", GUARDS_MODULE)      # the learned guards run wherever the scan runs (2026-11-12, improvement plan)
     found += guards.findings(files) if guards is not None else []
     return [f for f in found if _runs(f, proj)]
 
 
-def scan_surface(files: Numbered, proj: Any = None, root: str = ".") -> list[str]:
+def scan_surface(files: Numbered, proj: Any = None, root: str = ".", wider: bool = True) -> list[str]:
     """Run both the 8 line-pattern rules (``code_rules``) and the 9 surface rules (``dev_rules``) across ``files``."""
     if isinstance(proj, str):
         root, proj = proj, None
     proj = project(files) if proj is None else proj
-    found = list(scan(files, proj))
+    found = list(scan(files, proj, wider))
     seen = {(f["path"], f["line"], f["rule"]) for f in map(finding_fields, found) if f}
     for rel in sorted(files):
         if proj is not None and proj.for_path(rel).excluded:
@@ -318,6 +318,9 @@ def _load_baseline(tools: Any, where: Any = None) -> Any:
 
 def _need_base(want: str | None) -> None:
     """A named ``--diff BASE`` must exist in this checkout; the bare ``--diff`` falls back to ``main`` or ``HEAD`` (D27, I1)."""
+    if want is not None and not want and _git("rev-parse", "--is-inside-work-tree").strip() != "true":
+        # A bare --diff outside a git work tree compares nothing; "0 findings" would read as a clean change (2026-11-15).
+        print("brevio-core: warning: this folder is not a git work tree, so --diff compared nothing; scan it without --diff", file=sys.stderr)
     unborn = want == "HEAD" and _git("rev-parse", "--is-inside-work-tree").strip() == "true"     # a repository before its first commit: its files are all new
     if want and not unborn and not _git("rev-parse", "--verify", "-q", want).strip():
         raise UsageError(f"base '{want}' is not in this checkout (a shallow clone? fetch more history, or try --diff HEAD~3)")
@@ -428,6 +431,18 @@ def _read_raw(path: str) -> str | None:
         return None
 
 
+def link_target(rel: str) -> str:
+    """Where ``rel`` leads when its own name is a link, and "" when it is a file.
+
+    A write to the name of a link puts a copy of the file in the link's place and leaves the real file as it was
+    (``core_patch.link_reason``, 2026-11-12); a fix names the real file or none (ROADMAP, 2026-11-15). A link higher up the
+    path is no harm: the write goes through it into the real folder."""
+    if not os.path.islink(rel):
+        return ""
+    top, real = os.path.realpath("."), os.path.realpath(rel)
+    return os.path.relpath(real, top).replace(os.sep, "/") if os.path.commonpath([real, top]) == top else real
+
+
 def plan_fixes(lines: Numbered) -> Changes:
     """The rewrite of each file among ``lines`` that a fixer changes; only the selected line numbers are touched.
 
@@ -440,8 +455,11 @@ def plan_fixes(lines: Numbered) -> Changes:
         old = None if cfg is not None and cfg.excluded else _read_raw(rel)
         if old is None:
             continue
+        if link := link_target(rel):
+            print(f"brevio-core: skipped {rel}: it is a link to {link}, so a fix would put a copy in its place; name {link} itself", file=sys.stderr)
+            continue
         numbered = lines[rel]
-        parts, made = old.splitlines(keepends=True), []
+        parts, made = [t for t in re.split(r"(?<=\n)", old) if t], []     # git's line numbers: split on \n only, not at a form feed (2026-11-15)
         for lno in sorted({n for n, _text in numbered}):
             if not 0 < lno <= len(parts):
                 continue
@@ -464,6 +482,8 @@ def unified_diff(changes: Changes) -> str:
 def apply_fixes(changes: Changes) -> None:
     """Write each rewritten file in place, keeping its permission bits."""
     for rel, (_old, new, _rules) in changes.items():
+        if link_target(rel):     # a backstop: plan_fixes skips a link, and a write by its name would replace it
+            continue
         mode = os.stat(rel).st_mode
         write_atomic(rel, new)
         os.chmod(rel, mode)
@@ -692,6 +712,10 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _main(line: list[str]) -> int:
+    if line[:2] == ["hook", "run"]:     # the hook of every edit and stop: it skips the command table (2026-11-15)
+        hook = set_module("operator", "hook_cmd")
+        if hook is not None:
+            return hook.main(line[1:], prog="brevio-core hook")      # the same call the table entry makes
     tools, tool_help = line_commands()
     ap = parser(tools, tool_help)
     if line[:1] in (["--version"], ["-V"]):

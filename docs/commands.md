@@ -27,6 +27,7 @@ Every `brevio-core` command and option, generated from the argument definitions 
 | [`brevio-core heal`](#brevio-core-heal) | scan, apply the deterministic fixes, and print what still needs a person (exit 1 while anything remains) |
 | [`brevio-core shield`](#brevio-core-shield) | answer a maintainer's pull-request comment (fix, explain, roast, triage, heal) from the command line |
 | [`brevio-core patch`](#brevio-core-patch) | apply SEARCH/REPLACE blocks or a unified diff, only when the rules find the changed lines clean |
+| [`brevio-core ai`](#brevio-core-ai) | ask a model, or a program, you connect (connect, status, explain, fix, summarize, learn); asks before it sends |
 | [`brevio-core connect`](#brevio-core-connect) | detect stack and coding clients and write CLAUDE.md, CONSTITUTION.md & roadmap.json (--dry-run lists them first) |
 | [`brevio-core plan`](#brevio-core-plan) | create a single-task implementation plan (.brevio/task_plan.json & .brevio/TASK_PLAN.md) |
 | [`brevio-core build`](#brevio-core-build) | execute single-task build preparation and deterministic auto-fixes |
@@ -480,6 +481,109 @@ brevio-core patch [options] FILE
 | `--dry-run` |  | print the verdict and the diff; write nothing |
 | `--path PATH` |  | the file a SEARCH/REPLACE block applies to when it names none |
 | `--json` |  | print the verdict as JSON |
+
+## `brevio-core ai`
+
+Ask a model, or a program, you connect (connect, status, explain, fix, summarize, learn); asks before it sends.
+
+Off until you connect a model or a program. One call for one thing, after you have read the request and said yes. Nothing goes to Brevio.
+
+```
+brevio-core ai {connect,status,explain,fix,summarize,learn} ...
+```
+
+### `brevio-core ai connect`
+
+Write your own settings file: which endpoint, which model, which commands.
+
+```
+brevio-core ai connect [options]
+```
+
+| Argument | Default | What it does |
+| --- | --- | --- |
+| `--name NAME` | `default` | a name for this connection (default: default) |
+| `--url URL` |  | the endpoint's address; https, or http for this machine only |
+| `--format {chat,messages}` | `chat` | the shape of the request (default chat) |
+| `--model MODEL` |  | the model name the endpoint expects |
+| `--key-env KEY_ENV` |  | the NAME of the environment variable that holds your key (the key is never stored) |
+| `--local PORT` |  | an endpoint on this machine at PORT: no key, nothing leaves it |
+| `--program PROGRAM` |  | (preview) a program you name instead of an endpoint: its absolute path is found now and stored. It is started once per call with the request on its standard input; it may send the request elsewhere, which brevio-core cannot see. Use --arg and --pass-env with it |
+| `--arg TEXT` |  | an argument for the program, written --arg=TEXT, repeated for more; it is kept in your settings file, which a repository's brevio-core.toml cannot set |
+| `--pass-env NAME` |  | the NAME of an environment variable the program is started with, besides the few it needs to start; repeated for more |
+| `--use LIST` |  | the commands this connection serves, comma separated (default explain,fix; the others are summarize, learn, previews); one it served before and you leave out is turned off |
+
+### `brevio-core ai status`
+
+What is connected, which commands are on, today's calls, the limits and the consent here.
+
+```
+brevio-core ai status
+```
+
+### `brevio-core ai explain`
+
+A model's explanation of one finding.
+
+```
+brevio-core ai explain [options] [finding]
+```
+
+| Argument | Default | What it does |
+| --- | --- | --- |
+| `[finding]` |  | one finding as scan prints it: path:line: [Rn.n] message |
+| `--last` |  | use the first finding of a fresh scan instead |
+| `--context N` |  | lines either side of the flagged one that are sent (default 0; 0 sends the line alone) |
+| `--dry-run` |  | print the request and stop before anything goes out |
+| `--yes` |  | answer the Send it? question for you, at a terminal too; the request is still printed. It never answers the first-use agreement (a yes at a terminal) and never --apply |
+
+### `brevio-core ai fix`
+
+A model's fix for one finding, checked by the rules before it is shown.
+
+```
+brevio-core ai fix [options] [finding]
+```
+
+| Argument | Default | What it does |
+| --- | --- | --- |
+| `[finding]` |  | one finding as scan prints it: path:line: [Rn.n] message |
+| `--last` |  | use the first finding of a fresh scan instead |
+| `--context N` |  | lines either side of the flagged one that are sent (default 5; 0 sends the line alone) |
+| `--dry-run` |  | print the request and stop before anything goes out |
+| `--yes` |  | answer the Send it? question for you, at a terminal too; the request is still printed. It never answers the first-use agreement (a yes at a terminal) and never --apply |
+| `--show-refused` |  | when the rules refuse the reply, also show its text, spelled out and framed as refused model output (without it only the reasons) |
+| `--apply` |  | write the verified change to the working tree after a second yes at a terminal; it is never committed |
+
+### `brevio-core ai summarize`
+
+(preview) one call: what kinds of finding a change has, from rule IDs, titles and counts only.
+
+```
+brevio-core ai summarize [options]
+```
+
+| Argument | Default | What it does |
+| --- | --- | --- |
+| `--diff BASE` |  | the base to scan the changes against, as `scan --diff` takes it |
+| `--format {text,markdown}` | `text` | how the model-written answer is framed |
+| `--dry-run` |  | print the request and stop before anything goes out |
+| `--yes` |  | answer the Send it? question for you, at a terminal too; the request is still printed. It does not answer the first-use agreement |
+
+### `brevio-core ai learn`
+
+(preview) a model's patterns for a guard from a fix, kept only if the checks of `brevio-core learn` pass; it sends and writes only at a terminal.
+
+```
+brevio-core ai learn [options]
+```
+
+| Argument | Default | What it does |
+| --- | --- | --- |
+| `--staged` |  | the staged fix (git diff --cached) |
+| `--worktree` |  | the uncommitted fix (the working tree against HEAD) |
+| `--diff REF` | `HEAD~1` | a commit or range to learn from (default HEAD~1) |
+| `--dry-run` |  | print the request and stop before anything goes out |
 
 ## `brevio-core connect`
 

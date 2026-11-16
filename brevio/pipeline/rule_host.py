@@ -14,7 +14,7 @@ import subprocess
 
 # Same hardening as the harness's own git helper: a hook or fsmonitor in an agent-writable checkout never runs.
 _GIT_BIN = "git"   # a name, so the bare-git scan sees no literal that skips the flags
-GIT = (_GIT_BIN, "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false")
+GIT = (_GIT_BIN, "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "protocol.ext.allow=never")
 PALETTE = re.compile(r"\b(?:bg|text|border|ring|from|to|via)-(?:zinc|slate|gray|neutral|stone)-\d{2,3}\b")
 _TEST = re.compile(r"\.(test|spec)\.[cm]?[jt]sx?$|(^|/)(__tests__|tests?|e2e)/")
 
@@ -40,21 +40,65 @@ def _base(cwd: str) -> str:
     return "HEAD"
 
 
-def added_lines(cwd: str, files: list[str]) -> dict[str, list[str]]:
-    """The lines each file gains against main (committed or not); a new untracked file is all added."""
-    out: dict[str, list[str]] = {}
+_HUNK_HEAD = re.compile(r"^@@ -\d+(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
+
+
+def diff_added_rows(diff: str) -> list[tuple[int, str]]:
+    """``(new line number, text)`` for each added row of a diff. A hunk is read by the counts on its ``@@`` row, so an
+    added ``++i;`` (shown as ``+++i;``) is a line and the ``+++ b/file`` header is not (2026-11-15, the family of
+    pipeline-gates-1-F4)."""
+    out: list[tuple[int, str]] = []
+    old_left = new_left = new_no = 0
+    for raw in diff.splitlines():
+        if old_left or new_left:
+            if raw.startswith("+"):
+                out.append((new_no, raw[1:]))
+                new_no += 1
+                new_left = max(0, new_left - 1)
+                continue
+            if raw.startswith("-"):
+                old_left = max(0, old_left - 1)
+                continue
+            if raw.startswith("\\"):
+                continue
+            if raw.startswith(" "):
+                old_left, new_left, new_no = max(0, old_left - 1), max(0, new_left - 1), new_no + 1
+                continue
+            old_left = new_left = 0
+        head = _HUNK_HEAD.match(raw)
+        if head:
+            old_left = int(head.group(1) if head.group(1) is not None else 1)
+            new_no = int(head.group(2))
+            new_left = int(head.group(3) if head.group(3) is not None else 1)
+    return out
+
+
+def base_ref(cwd: str) -> str:
+    """The ref added lines are measured against: ``origin/main``, ``main`` or, with neither, ``HEAD``."""
+    return _base(cwd)
+
+
+def added_lines_numbered(cwd: str, files: list[str]) -> dict[str, list[tuple[int, str]]]:
+    """``(line number, text)`` of the lines each file gains against main (committed or not). A file absent from main is
+    all added; a file that main holds and the change only shortens has no added line (2026-11-15, pipeline-2-F7)."""
+    out: dict[str, list[tuple[int, str]]] = {}
     base = _base(cwd)
     for f in files:
         diff = _git(cwd, "diff", "-U0", base, "--", f)
-        lines = [ln[1:] for ln in diff.splitlines() if ln.startswith("+") and not ln.startswith("+++")]
-        if not lines and not _git(cwd, "ls-tree", base, "--", f).strip():
+        rows = diff_added_rows(diff)
+        if not rows and not _git(cwd, "ls-tree", base, "--", f).strip():
             try:
                 with open(os.path.join(cwd, f), encoding="utf-8", errors="ignore") as fh:
-                    lines = fh.read().splitlines()
+                    rows = list(enumerate(fh.read().splitlines(), 1))
             except OSError:
-                lines = []
-        out[f] = lines
+                rows = []
+        out[f] = rows
     return out
+
+
+def added_lines(cwd: str, files: list[str]) -> dict[str, list[str]]:
+    """The lines each file gains against main (committed or not); a new untracked file is all added."""
+    return {f: [text for _, text in rows] for f, rows in added_lines_numbered(cwd, files).items()}
 
 
 def removed_lines(cwd: str, files: list[str]) -> dict[str, list[str]]:
@@ -83,13 +127,4 @@ def head_added_lines(workspace_dir: str, rel_path: str) -> list[tuple[int, str]]
         return []
     if res.returncode != 0 or not res.stdout.strip():
         return []
-    out: list[tuple[int, str]] = []
-    cur_line = 1
-    for raw in res.stdout.splitlines():
-        if raw.startswith("@@"):
-            m = re.search(r"\+(\d+)", raw)
-            cur_line = int(m.group(1)) if m else 1
-        elif raw.startswith("+") and not raw.startswith("+++"):
-            out.append((cur_line, raw[1:]))
-            cur_line += 1
-    return out
+    return diff_added_rows(res.stdout)

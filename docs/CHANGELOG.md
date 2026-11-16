@@ -1,5 +1,53 @@
 # Changelog
 
+## 0.11.1
+
+### Changed
+
+#### Starter packs
+
+- The `pack-billing-idempotency-key` guard now also flags a payment `create` call with no options argument for a key when the call spans up to ten lines. Before, a call that spans lines was not read.
+- Run `brevio-core add fastapi-async` or `brevio-core add stripe-polar-billing` again to get the reworded guards. A guard you switched off stays off, and its counts stay. Before, running the command again reset the pack's status and counters.
+
+#### Checks found in a second review
+
+- `check` now treats a git worktree or a submodule as a repository. Before, a clean worktree read as "not a repository": the environment-variable check scanned the whole tree and the import check did not run.
+- `brevio-core add <pack>` run again keeps a guard you switched off or dismissed, with its counts, and says which guards it kept. A guard that is still active gets the pack's current wording. `--json` lists the kept guards under `kept_guards`.
+- A guard may carry `file_not_contains`, a literal checked once against the whole file: a file that holds it is not flagged. The `eu-ai-act` pack uses it for `X-AI-Generated`, so a response written over several lines with the header is not flagged. A file with one handler that sets the header and one that does not is passed.
+- `check` reads an untracked `package.json` for R16.2, as it reads one in the diff.
+- `check` flags a new file with a numbered name, such as `handler_v2.ts`, as a copy only when the file without the number is in the same folder.
+- A scan that reads added lines now keeps a line that begins with two plus signs in the helpers that `dev_rules` and `code_rules` use, as `check` does.
+- `check` now keeps an added line that begins with two plus signs, such as `++i;`, and numbers the lines after it correctly. A path with a space no longer keeps a trailing tab.
+- `learn` no longer credits the removed lines of a deleted file to the file before it in the diff. A guard compiled from such a diff now takes its patterns from the right file.
+- The description of the Cursor rule file says that the rules make no model call, and no longer says "zero-token".
+- `scan --diff` with no base, run outside a git work tree, now says on standard error that it compared nothing. A repository before its first commit now reads its staged files.
+- Line numbers are the same in `scan`, `scan --diff`, `--fix` and `patch`: a line break is a line feed, as in git. Before, a form feed in a file moved the number of the lines after it.
+- `scan --fix` and `patch` leave a file that is a link alone and say which file to name. Before, `scan --fix` replaced the link with a copy.
+- `check` names the untracked files over one million bytes that it did not read.
+- `check` reads the staged files of a repository before its first commit, as `scan --diff` does.
+- A `.brevio/guards.json` that starts with a byte order mark is read.
+- `heal --no-fix` writes no guard and no agent rule. A heal run no longer adds an empty guard for a finding, and `gain` counts a guard as active only when it has a pattern. Guards already in your file stay.
+- A heal run learns a guard from the edit only when a line that the edit removes draws a finding. Before, it could learn the safe line that an edit replaced.
+- The agent hook does not block the agent on a finding that `scan --diff` does not fail on, such as a preview rule. Test-custody findings still block.
+- `score --diff` with a base that the checkout does not have stops with exit code 2, as `scan --diff` does.
+- `learn --diff=--` is refused on Python 3.10 with the message for any value that starts with a hyphen. Before, it ended in a traceback.
+- Shield replies show file names, findings and error texts as code, so a name that holds backticks or a mention stays inert.
+- `config` lists a preview rule at level warn, the level its findings have.
+- The setup self-test no longer passes when a `brevio-core.toml` in the folder ignores the rule, and `init` writes the pinned command into `.windsurfrules`, `.clinerules` and the Copilot file too.
+- R5.5 also finds `shell=True` behind a nested call, such as `subprocess.run(shlex.split(x), shell=True)`, and in a subprocess call written over several lines.
+- R18.2 also finds a `target="_blank"` link whose tag holds an arrow handler or runs over several lines.
+- R10.1 reads a `requests` call over several lines as one call, so a `timeout=` on a later line counts. Before, a call with a nested call on its first line was flagged although it passed a timeout.
+- The repository map reads a limited number of files. When a tree holds more, it now takes seed files first, then one top folder after another, shallow files first, and says so: the text starts with a line that gives the files read of the files found, and the JSON has `files_read` and `files_skipped`. Before, it stopped after the first folders in name order and said nothing.
+- `brief --record` no longer ends in a traceback when the text is refused. It prints a line that starts with `refused:` on standard error, ends with exit code 2 and does not repeat the text. A name in backticks, such as `signal`, is accepted. A backtick span that holds a space and a shell word is still refused.
+- The single-task flow, run with free text that matches no roadmap item, no longer marks the starter item done when its last step passes. `task_plan.json` has a new key `roadmap_matched`. A plan written by an older release is read as before.
+
+#### Supply chain and speed
+
+- The npm wrappers (`npx brevio`, `llmstxt`, `ast-ratchet` and `infra-detect`) no longer import Python code from the folder they scan. Their fallbacks install `brevio-core` 0.11.1, not the newest release.
+- The maintainer shield workflow installs the release that wrote it, and pins `actions/setup-python` to a commit. `actions/github-script` stays on its tag until its commit is pinned.
+- The agent-file check takes its file list from git in a repository and finds the same files as before. Ignored agent files are still checked.
+- `brevio-core hook run` starts the hook without building the whole command table first. Its output and exit codes do not change.
+
 ## 0.11.0
 
 ### Added
@@ -162,7 +210,7 @@
 #### The optional plugin
 
 - The optional plugin `brevio-core-assist` is not built after 0.9.1 and stays installable. The core does not read its
-  `BREVIO_ASSIST_*` variables.
+  `BREVIO_ASSIST_*` variables. `brevio-core ai connect --url URL --key-env NAME` replaces it.
 
 ### Added
 

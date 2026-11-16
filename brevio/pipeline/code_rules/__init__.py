@@ -202,8 +202,8 @@ STATUS_REASONS: dict[str, str] = {
                     "this rule, so no scan fails on it. `brevio-core check` reports it and exits 1 when it does."),
 }
 # A line for the Rules section of the next release notes about a rule, for a change the ID file cannot show: findings
-# that moved to another ID before the first release. Emptied when the release that carries them is out: 0.10.0 is out
-# (2026-11-13), so the table is empty until a change of the next release needs a line.
+# that moved to another ID before the first release. Emptied when the release that carries them is out: 0.11.0 is out
+# (2026-11-16), so the table is empty until a change of the next release needs a line.
 RULE_NOTES: dict[str, str] = {}
 
 
@@ -264,6 +264,8 @@ _TEST_ASSET_RX = re.compile(r"(?:^|/)(?:tests?|spec)/assets/", re.I)
 _NO_ALT_IMG_RX = re.compile(r"<img\b(?!.*?alt=)[^>]*>", re.I)
 _CLICK_ON_DIV_RX = re.compile(r"<div\b[^>]*onClick\s*=(?!.*?role=)[^>]*>", re.I)
 _TARGET_BLANK_A_RX = re.compile(r"""<a\b[^>]*\btarget\s*=\s*["']_blank["'][^>]*>""", re.I)
+# The same tag read with the arrow ``=>`` of a handler inside it, which ``[^>]*`` took for the end of the tag (HARNESS_CODE_RULES_WIDER).
+_TARGET_BLANK_A_WIDE_RX = re.compile(r"""<a\b(?:=>|[^>])*?\btarget\s*=\s*["']_blank["'](?:=>|[^>])*>""", re.I)
 _REL_NOOPENER_RX = re.compile(r"""\brel\s*=\s*["'][^"']*\bnoopener\b""", re.I)
 _UNBOUNDED_QUERY_RX = re.compile(r"\.(?:findMany|select)\s*\(\s*\{(?![^}]*take\s*:)(?![^}]*limit\s*:)", re.I)
 _AS_ANY_RX = re.compile(r"\bas\s+any(?![\w$])|\bz\.any\s*\(")
@@ -285,6 +287,9 @@ _SUBPROCESS_SHELL_RX = re.compile(
     r"\bsubprocess\.(?:run|Popen|call|check_call|check_output)\s*\([^)]*\bshell\s*=\s*True\b"
     r"|\bos\.system\s*\(\s*f[\"']"
 )
+_SUBPROCESS_START_RX = re.compile(r"\bsubprocess\.(?:run|Popen|call|check_call|check_output)\s*\(")
+_SHELL_TRUE_ARG_RX = re.compile(r"shell\s*=\s*True")
+_REQUESTS_START_RX = re.compile(r"\brequests\.(?:get|post|put|delete|patch|head)\s*\(", re.I)
 _REQUESTS_CALL_RX = re.compile(r"\brequests\.(?:get|post|put|delete|patch|head)\s*\([^)]*\)")
 _TIMEOUT_KW_RX = re.compile(r"\btimeout\s*=")
 # A key whose whole value is ``*`` or ``latest``, one per line or several on a minified line.
@@ -410,6 +415,21 @@ def _call_args(masked: str, start: int) -> list[str] | None:
     return None
 
 
+def _call_open(start: re.Pattern[str], text: str) -> bool:
+    """A call that ``start`` finds in ``text`` is not closed in it (read with brackets balanced, strings masked)."""
+    masked = _mask_strings_and_trailing_comments(text)
+    return any(_call_args(masked, m.end()) is None for m in start.finditer(masked))
+
+
+def _shell_true_call(text: str) -> bool:
+    """A subprocess call in ``text`` whose own arguments hold ``shell=True``, whatever calls its arguments hold."""
+    masked = _mask_strings_and_trailing_comments(text)
+    for m in _SUBPROCESS_START_RX.finditer(masked):
+        if any(_SHELL_TRUE_ARG_RX.fullmatch(a) for a in _call_args(masked, m.end()) or ()):
+            return True
+    return False
+
+
 # ``function fetch(url) {`` or a method ``fetch(url) {`` defines a function; it does not call one.
 _FETCH_DEFINITION_RX = re.compile(r"\bfunction\s*\*?\s*fetch\s*\(|^\s*(?:(?:async|static|public|private|protected)\s+)*fetch\s*\([^)]*\)\s*(?::[^;{]*)?\{")
 
@@ -500,12 +520,18 @@ def _check_ui_patterns(rel_path: str, lno: int, line: str, findings: list[str]) 
         findings.append(f"{rel_path}:{lno}: [R18.5] `onClick` handler on non-interactive `<div>` without `role`")
 
 
-def _check_python_patterns(rel_path: str, lno: int, line: str, in_test: bool, findings: list[str]) -> None:
-    """The rules for a Python source line (``.py``); the ``except`` handlers are read in ``_handler_findings``."""
+def _check_python_patterns(rel_path: str, lno: int, line: str, in_test: bool, findings: list[str],
+                           wider: bool = True, whole: bool = False) -> None:
+    """The rules for a Python source line (``.py``); the ``except`` handlers are read in ``_handler_findings``.
+
+    ``whole``: ``line`` is the joined text of a call, so a call still open in it is judged as it stands. Otherwise a
+    ``requests`` call not closed on the line waits for its joined text, where a ``timeout=`` on a later line counts
+    (2026-11-15, second review). ``wider`` adds ``shell=True`` found past a nested call (``_shell_true_call``)."""
     if not in_test and not line.lstrip().startswith("#"):
-        if _SUBPROCESS_SHELL_RX.search(line):
+        if _SUBPROCESS_SHELL_RX.search(line) or (wider and "shell" in line and _shell_true_call(line)):
             findings.append(f"{rel_path}:{lno}: [R5.5] Unsafe `shell=True` subprocess or interpolated `os.system` call")
-        if _REQUESTS_CALL_RX.search(line) and not _TIMEOUT_KW_RX.search(line):
+        if (_REQUESTS_CALL_RX.search(line) and not _TIMEOUT_KW_RX.search(line)
+                and (whole or not _call_open(_REQUESTS_START_RX, line))):
             findings.append(f"{rel_path}:{lno}: [R10.1] Outbound `requests` call without explicit `timeout=`")
     if not line.lstrip().startswith("#") and _python_unsafe_eval(rel_path, line):
         findings.append(f"{rel_path}:{lno}: [R2.8] Unsafe `eval` or `exec` on a non-literal detected")
@@ -525,7 +551,8 @@ def _check_script_patterns(rel_path: str, lno: int, line: str, in_test: bool, fi
                         "AbortSignal; pass `signal: AbortSignal.timeout(ms)` or `timeout`")
 
 
-def _check_security_patterns(rel_path: str, lno: int, line: str, code: bool, ext: str, before: str, findings: list[str]) -> None:
+def _check_security_patterns(rel_path: str, lno: int, line: str, code: bool, ext: str, before: str, findings: list[str],
+                             wider: bool = True) -> None:
     """The cross-language security and manifest checks outside test files."""
     if _hardcoded_literal(line, before):
         findings.append(f"{rel_path}:{lno}: [R13.1] Hardcoded secret pattern detected in added code")
@@ -536,22 +563,25 @@ def _check_security_patterns(rel_path: str, lno: int, line: str, code: bool, ext
         findings.append(f"{rel_path}:{lno}: [R2.8] Hidden directional or Unicode tag control character detected")
     if code and ext in (".py", *_SCRIPT_EXTS) and _UNSAFE_SQL_RX.search(line):
         findings.append(f"{rel_path}:{lno}: [R2.8] Raw SQL string interpolation detected; use parameterized queries")
-    if ext in (".tsx", ".jsx", ".html", ".vue", ".svelte") and code:
-        if any(not _REL_NOOPENER_RX.search(m.group(0)) for m in _TARGET_BLANK_A_RX.finditer(line)):
+    if ext in _LINK_EXTS and code:
+        tag_rx = _TARGET_BLANK_A_WIDE_RX if wider else _TARGET_BLANK_A_RX
+        if any(not _REL_NOOPENER_RX.search(m.group(0)) for m in tag_rx.finditer(line)):
             findings.append(f'{rel_path}:{lno}: [R18.2] External `target="_blank"` link without `rel="noopener noreferrer"`')
 
 
-def _check_line_patterns(rel_path: str, lno: int, line: str, findings: list[str], before: str = "") -> None:
-    """Helper to evaluate single-line AST and regex rules; ``before`` is the text of the few lines above ``line``."""
+def _check_line_patterns(rel_path: str, lno: int, line: str, findings: list[str], before: str = "",
+                         wider: bool = True, whole: bool = False) -> None:
+    """Helper to evaluate single-line AST and regex rules; ``before`` is the text of the few lines above ``line``.
+    ``whole`` says ``line`` is the joined text of one construct; ``wider`` is the flag of ``scan_lines``."""
     ext = os.path.splitext(rel_path)[1].lower()
     in_test = is_test_path(rel_path)
     code = not _COMMENT_LINE_RX.match(line)     # the @ts-ignore rule still reads comments: the directive is one
     is_js = ext in _SCRIPT_EXTS
 
     if not in_test:
-        _check_security_patterns(rel_path, lno, line, code, ext, before, findings)
+        _check_security_patterns(rel_path, lno, line, code, ext, before, findings, wider)
     if ext == ".py":
-        _check_python_patterns(rel_path, lno, line, in_test, findings)
+        _check_python_patterns(rel_path, lno, line, in_test, findings, wider, whole)
     if os.path.basename(rel_path) == "package.json":
         if any(m["key"] not in ("version", "private") for m in _WILDCARD_DEP_RX.finditer(line)):
             findings.append(f"{rel_path}:{lno}: [R16.2] Wildcard or `latest` dependency version in `package.json`")
@@ -567,11 +597,12 @@ def _check_line_patterns(rel_path: str, lno: int, line: str, findings: list[str]
 
 def scan_added_lines_for_rules(
     added_lines_by_file: dict[str, list[str]],
+    wider: bool = True,
 ) -> list[str]:
-    """Scan added lines across changed files against portable zero-token code rules."""
+    """Scan added lines across changed files against portable zero-token code rules (``wider``: see ``scan_lines``)."""
     findings: list[str] = []
     for rel_path, lines in added_lines_by_file.items():
-        findings += scan_lines(rel_path, list(enumerate(lines, 1)))
+        findings += scan_lines(rel_path, list(enumerate(lines, 1)), wider)
     return findings
 
 
@@ -580,13 +611,30 @@ def declaration(rel_path: str) -> bool:
     return bool(_DECLARATION_RX.search(rel_path))
 
 
-_UNCLOSED_CONSTRUCTS = (
-    (re.compile(r"<img\b", re.I), ">"),
-    (re.compile(r"<div\b", re.I), ">"),
-    (re.compile(r"dangerouslySetInnerHTML\s*="), "}}"),
-    (re.compile(r"\.(?:execute|\$queryRawUnsafe|\$executeRawUnsafe)\s*\(", re.I), ")"),
-    (re.compile(r"\brequests\.(?:get|post|put|delete|patch|head)\s*\(", re.I), ")"),
+# A construct that can span lines: where it starts, what closes it, and whether only the wider scan reads it. A string
+# closer is looked for in the joined text; a compiled one is searched in it; ``None`` means the call's brackets balance.
+_LINK_EXTS = (".tsx", ".jsx", ".html", ".vue", ".svelte")     # where a link tag is read
+_TAG_END_RX = re.compile(r"(?<!=)>")        # the end of a tag, not the arrow of a handler inside it
+_UNCLOSED_CONSTRUCTS: tuple[tuple[re.Pattern[str], str | re.Pattern[str] | None, bool], ...] = (
+    (re.compile(r"<img\b", re.I), ">", False),
+    (re.compile(r"<div\b", re.I), ">", False),
+    (re.compile(r"dangerouslySetInnerHTML\s*="), "}}", False),
+    (re.compile(r"\.(?:execute|\$queryRawUnsafe|\$executeRawUnsafe)\s*\(", re.I), ")", False),
+    (_REQUESTS_START_RX, None, False),
+    (_SUBPROCESS_START_RX, None, True),
+    (re.compile(r"<a\b", re.I), _TAG_END_RX, True),
 )
+
+
+def _is_closed(pattern: re.Pattern[str], closer: str | re.Pattern[str] | None, text: str) -> bool:
+    if closer is None:
+        return not _call_open(pattern, text)
+    if isinstance(closer, str):
+        return closer in text
+    opened = list(pattern.finditer(text))   # a tag is closed when its end follows the last opening, not an earlier tag's
+    return not opened or bool(closer.search(text, opened[-1].end()))
+
+
 _FINDING_KEY_RX = re.compile(r":(\d+):\s*\[(R\d+\.\d+)\]")
 
 
@@ -606,8 +654,38 @@ def _dedup_findings(findings: list[str]) -> list[str]:
     return deduped
 
 
-def scan_lines(rel_path: str, numbered: list[tuple[int, str]]) -> list[str]:
+def _open_construct(ext: str, line: str, wider: bool) -> tuple[re.Pattern[str], str | re.Pattern[str] | None] | None:
+    """The first construct that starts on ``line`` and is not closed on it. The subprocess and link entries are the wider
+    scan's, read in Python and markup files only."""
+    for pattern, closer, wider_only in _UNCLOSED_CONSTRUCTS:
+        if wider_only and not (wider and (ext == ".py" if closer is None else ext in _LINK_EXTS)):
+            continue
+        if pattern.search(line) and not _is_closed(pattern, closer, line):
+            return pattern, closer
+    return None
+
+
+def _joined_text(numbered: list[tuple[int, str]], i: int, pattern: re.Pattern[str],
+                 closer: str | re.Pattern[str] | None) -> str:
+    """The line ``i`` and the lines after it (consecutive numbers, at most ten more) up to where the construct closes."""
+    parts = [numbered[i][1]]
+    curr_lno = numbered[i][0]
+    for next_lno, next_line in numbered[i + 1:i + 11]:
+        if next_lno != curr_lno + 1:
+            break
+        parts.append(next_line)
+        curr_lno = next_lno
+        if _is_closed(pattern, closer, " ".join(parts)):
+            break
+    return " ".join(parts)
+
+
+def scan_lines(rel_path: str, numbered: list[tuple[int, str]], wider: bool = True) -> list[str]:
     """Scan ``(line_no, text)`` pairs of one file, keeping the real line numbers (a diff's added lines).
+
+    ``wider`` (2026-11-15, second review) also reads ``shell=True`` behind a nested call, a subprocess call over several
+    lines and a link tag with a handler arrow or over several lines. The harness passes it by its own setting
+    (``HARNESS_CODE_RULES_WIDER``); the open core reads them all.
 
     A TypeScript declaration file (``.d.ts``, ``.d.mts``, ``.d.cts``) gives no finding, so every scan mode skips it."""
     raw_findings: list[str] = []
@@ -632,22 +710,11 @@ def scan_lines(rel_path: str, numbered: list[tuple[int, str]]) -> list[str]:
         if lno in handlers:
             raw_findings.append(handlers[lno])
         before = "\n".join(t for n, t in numbered[max(0, i - _SECRET_CONTEXT):i] if n >= lno - _SECRET_CONTEXT)
-        _check_line_patterns(rel_path, lno, line, raw_findings, before)
+        _check_line_patterns(rel_path, lno, line, raw_findings, before, wider)
 
-        for pattern, closer in _UNCLOSED_CONSTRUCTS:
-            if pattern.search(line) and closer not in line:
-                combined_parts = [line]
-                curr_lno = lno
-                for j in range(i + 1, min(i + 11, len(numbered))):
-                    next_lno, next_line = numbered[j]
-                    if next_lno != curr_lno + 1:
-                        break
-                    combined_parts.append(next_line)
-                    curr_lno = next_lno
-                    if closer in next_line:
-                        break
-                combined_line = " ".join(combined_parts)
-                _check_line_patterns(rel_path, lno, combined_line, raw_findings, before)
-                break
+        open_ = _open_construct(ext, line, wider)
+        if open_:
+            combined_line = _joined_text(numbered, i, *open_)
+            _check_line_patterns(rel_path, lno, combined_line, raw_findings, before, wider, True)
 
     return _dedup_findings(raw_findings)

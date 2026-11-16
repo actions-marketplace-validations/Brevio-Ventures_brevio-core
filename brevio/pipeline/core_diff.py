@@ -49,9 +49,20 @@ def _read_resolved(path: str) -> list[tuple[int, str]]:
             return []
         with open(path, encoding="utf-8", errors="ignore") as fh:
             text = fh.read(MAX_BYTES + 1)       # a device or a pseudo-file may report a size of 0 and never end
-        return [] if len(text) > MAX_BYTES else list(enumerate(text.splitlines(), 1))
+        return [] if len(text) > MAX_BYTES else numbered(text)
     except OSError:
         return []
+
+
+def numbered(text: str) -> list[tuple[int, str]]:
+    """The lines of ``text`` numbered as git and ``core_patch`` number them: split on ``\\n`` only, a trailing ``\\r`` dropped.
+
+    ``str.splitlines`` also breaks at a form feed, a vertical tab and the Unicode separators, so a line after one was
+    numbered one too high and ``scan``, ``scan --diff`` and ``--fix`` named different lines (ROADMAP, 2026-11-15)."""
+    parts = text.split("\n")
+    if parts and parts[-1] == "":
+        parts.pop()
+    return [(n, p[:-1] if p.endswith("\r") else p) for n, p in enumerate(parts, 1)]
 
 
 def long_head(path: str) -> bool:
@@ -64,7 +75,7 @@ def long_head(path: str) -> bool:
             head = fh.read(2 * LONG_LINE + 8)       # two lines of at most LONG_LINE characters, and their separators, fit
     except OSError:
         return False
-    return any(len(text) > LONG_LINE for text in head.splitlines()[:2])
+    return any(len(text) > LONG_LINE for _n, text in numbered(head)[:2])
 
 
 class FileLines(Mapping[str, list[tuple[int, str]]]):
@@ -134,7 +145,9 @@ def diff_lines(base: str, only: Iterable[str] = ()) -> Numbered:
     spec = [f":(literal){p}" for p in only]
     out: Numbered = {}
     path, lno = "", 0
-    for ln in git("diff", "-U0", "--no-color", "--diff-filter=ACMR", resolve(base), "--", *spec).splitlines():
+    unborn = not has_head()
+    for ln in git("diff", "-U0", "--no-color", "--diff-filter=ACMR", resolve(base), "--", *spec).split("\n"):     # not splitlines: an added form feed would cut the line
+        ln = ln[:-1] if ln.endswith("\r") else ln
         if ln.startswith("+++ "):
             path = ln[6:].rstrip("\t") if ln.startswith("+++ b/") else ""     # git ends the name with a tab when it holds a space
         elif ln.startswith("@@"):
@@ -144,7 +157,10 @@ def diff_lines(base: str, only: Iterable[str] = ()) -> Numbered:
             out.setdefault(path, []).append((lno, ln[1:]))
             lno += 1
     here = git("rev-parse", "--show-prefix").strip()     # ls-files names a file from the current folder, diff from the git root
-    for new in git("ls-files", "--others", "--exclude-standard", "--", *spec).splitlines():
+    # Before the first commit there is no HEAD to diff, and a staged file is no longer listed as untracked: read the
+    # index too, so a repository with its files only staged is not scanned as empty (2026-11-15).
+    named = git("ls-files", *(["--cached"] if unborn else []), "--others", "--exclude-standard", "--", *spec).splitlines()
+    for new in dict.fromkeys(named):
         if new.endswith(CODE_SUFFIXES) or new.rpartition("/")[2] == "package.json":     # a manifest is scanned too (R16.2)
             out[here + new] = read(new)
     # Build output and dependencies are never the change under review, tracked or not: an install in CI writes

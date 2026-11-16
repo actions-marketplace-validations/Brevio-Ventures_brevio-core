@@ -608,13 +608,13 @@ class TestTheNetworkCheckResolvesAliasesAndNamesTakenFromAPackage(unittest.TestC
     NEW = ("logging.handlers", "logging.config", "_socket", "_ssl", "wsgiref.simple_server", "selectors", "pydoc", "xmlrpc.client",
            "imaplib", "poplib", "telnetlib", "nntplib", "asyncio.streams", "smtpd", "asyncore", "requests", "urllib3")
 
+    @classmethod
+    def setUpClass(cls):
+        cls.base = next(m for m in _modules() if m.rel == "brevio/pipeline/core_cli.py")
+
     def copy_with(self, extra, rel=None):
-        """The problems of a copy of a shipped module (the loader, which every set ships) with ``extra`` source appended.
-        ``rel`` says which module the check believes it is looking at."""
-        base = next(m for m in _modules() if m.rel == "brevio/pipeline/core_cli.py")
-        with open(os.path.join(TREE, *base.rel.split("/")), encoding="utf-8") as fh:
-            src = fh.read()
-        copy = _Module(rel or base.rel, ast.parse(src + "\n" + extra), base.everywhere)
+        """The problems of the loader (every set ships it) with ``extra`` appended; the tree is parsed once (ef-gate-time-P5)."""
+        copy = _Module(rel or self.base.rel, ast.Module(self.base.tree.body + ast.parse(extra).body, []), self.base.everywhere)
         with unittest.mock.patch(f"{__name__}._modules", return_value=[copy]):
             return problems()
 

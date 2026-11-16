@@ -183,7 +183,7 @@ DETAILS: dict[str, Detail] = {
                "`raise` inside an `if`, or `raise SomethingElse`, does not count."),
     "R5.5": _d("Passing shell=True or an interpolated command string runs a shell that can execute injected input.",
                "subprocess.run(cmd, shell=True)", "subprocess.run(cmd, timeout=60, check=True)", "py",
-               "Test files and comment lines are not flagged."),
+               "Test files and comment lines are not flagged. A call over up to ten lines is read as one."),
     # R6: tests
     "R6.1": _d("A test that mocks the module it is named after never runs the real code.",
                "vi.mock('./a');", "vi.mock('./db');", "ts"),
@@ -232,7 +232,7 @@ DETAILS: dict[str, Detail] = {
     # R10: API and network
     "R10.1": _d("A request with no timeout can hang a worker for ever.",
                 "response = requests.get(url)", "response = requests.get(url, timeout=10)", "py",
-                "Test files and calls that pass timeout= on the same line are not flagged."),
+                "Test files and calls that pass timeout= anywhere in the call are not flagged; a call over up to ten lines is read as one."),
     "R10.2": _d("Without an idempotency key a retried POST creates the thing twice.",
                 "await fetch(url, { method: 'POST', body });", "await fetch(url, { method: 'POST', body, headers: { 'Idempotency-Key': key } });"),
     "R10.3": _d("Ignoring Retry-After keeps you rate limited for longer.",
@@ -385,11 +385,11 @@ DETAILS: dict[str, Detail] = {
     # R18: accessibility
     "R18.1": _d("A screen reader reads nothing for an image with no alt text.",
                 '<img src="/logo.png" />', '<img src="/logo.png" alt="Acme logo" />', "tsx",
-                "Only <img> tags written on a single added line are checked."),
+                "An <img> tag over up to ten added lines is read as one tag. Test files are not flagged."),
     "R18.2": _d("A target=\"_blank\" link without rel=\"noopener noreferrer\" exposes the opener window to the linked page.",
                 '<a href="/docs" target="_blank">Docs</a>',
                 '<a href="/docs" target="_blank" rel="noopener noreferrer">Docs</a>', "tsx",
-                "Test files and links that include noopener in rel= on the same tag are not flagged."),
+                "Test files and links that include noopener in rel= on the same tag are not flagged. A tag over up to ten lines is read as one tag."),
     "R18.3": _d("If a control cannot be reached with the keyboard, some people cannot use it.",
                 "<div onClick={open}>Open</div>", "<button onClick={open}>Open</button>", "tsx"),
     "R18.4": _d("Light grey text on white cannot be read by many people.",

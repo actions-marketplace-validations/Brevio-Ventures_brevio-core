@@ -142,7 +142,9 @@ finding, and a `label` field says in words what it looks for.
 - The FastAPI blocking-call guard leaves out test folders, `test_*.py`, `*_test.py` and `conftest.py` through `exclude_file_patterns`: a test under an
   API folder held a sleep and was flagged.
 - A guard file written by an earlier release keeps its old pack guards. Run `brevio-core add <pack>` again to refresh them;
-  that also resets the status and counters of the pack's guards.
+  a guard you switched off stays off with its counts, and a guard still active gets the pack's current wording.
+- A guard may carry `file_not_contains`, a literal checked once against the whole file: a file that holds it is not
+  flagged. The EU AI Act pack uses it for `X-AI-Generated`.
 
 ## `learn import` (preview)
 

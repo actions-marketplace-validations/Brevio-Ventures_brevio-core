@@ -39,7 +39,7 @@ inputs:
   package-version:
     description: 'brevio-core version to install; the default is the release of this Action, "latest" takes the newest'
     required: false
-    default: '0.11.0'
+    default: '0.11.1'
   allow-new-suppressions:
     description: 'true when a person reviewed the ignore comments and baseline entries this change adds (the scan then does not report them); keep false for a change nobody reviewed'
     required: false

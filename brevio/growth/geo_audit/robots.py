@@ -7,10 +7,7 @@ rubric) and ``ai_rules`` (blocked | allowed | not_specified per crawler, the com
 """
 from __future__ import annotations
 
-import re
 from collections.abc import Iterable, Iterator
-
-_FULL_DISALLOW_RE = re.compile(r"^\s*disallow:\s*/\s*(?:#.*)?$", re.M)
 
 
 def directives(text: str) -> Iterator[tuple[str, str]]:
@@ -60,38 +57,25 @@ def bot_blocked(groups: dict[str, list[tuple[str, str]]], bot: str) -> bool:
 
 
 def blocked_bots(text: str, crawlers: Iterable[str]) -> list[str]:
-    """The ``crawlers`` a whole-site ``Disallow: /`` (their own group or ``*``) shuts out, in
-    first-blocked order; a later ``Allow: /`` for the crawler by name lifts it again."""
-    crawlers = tuple(crawlers)
-    blocked: list[str] = []
-    agents: list[str] = []
-    for key, val in directives(text):
-        if key == "user-agent":
-            agents = [val]
-            continue
-        if val != "/":
-            continue
-        low = {a.lower() for a in agents}
-        if key == "disallow":
-            for bot in crawlers:
-                if (bot.lower() in low or "*" in low) and bot not in blocked:
-                    blocked.append(bot)
-        elif key == "allow":
-            for bot in crawlers:
-                if bot.lower() in low and bot in blocked:
-                    blocked.remove(bot)
-    return blocked
+    """The ``crawlers`` a whole-site ``Disallow: /`` shuts out, in the order given. A crawler with its
+    own group is judged by that group alone, otherwise by ``*``; a group with ``Allow: /`` is open.
+    Rebuilt on ``parse_robots`` so a group of several agents and an own group that overrides ``*``
+    read true (second review 2026-11-14, growth-small-F1)."""
+    groups = parse_robots(text)
+    return [bot for bot in crawlers if bot_blocked(groups, bot)]
 
 
 def ai_rules(robots_txt: str, bots: Iterable[str]) -> dict:
-    """``{bot: blocked | allowed | not_specified}``. Blocked only on a whole-site ``Disallow: /``: a
-    substring test read ``Disallow: /admin`` as a full block (code review 2026-10-22, plan-llm 14)."""
-    txt = (robots_txt or "").lower()
+    """``{bot: blocked | allowed | not_specified}``, names matched without regard to case. Blocked only
+    on a whole-site ``Disallow: /`` (a substring test once read ``Disallow: /admin`` as a full block,
+    plan-llm 14); allowed when the crawler or ``*`` has a group that does not block it."""
+    groups = parse_robots(robots_txt)
     rules = {}
     for bot in bots:
-        if f"user-agent: {bot}" in txt:
-            part = txt.split(f"user-agent: {bot}", 1)[1].split("user-agent:")[0]
-            rules[bot] = "blocked" if _FULL_DISALLOW_RE.search(part) else "allowed"
+        if bot_blocked(groups, bot):
+            rules[bot] = "blocked"
+        elif bot.lower() in groups or "*" in groups:
+            rules[bot] = "allowed"
         else:
             rules[bot] = "not_specified"
     return rules

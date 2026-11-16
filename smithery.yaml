@@ -1,0 +1,8 @@
+# Smithery MCP server configuration for brevio-core
+startCommand:
+  type: stdio
+  configSchema:
+    type: object
+    properties: {}
+  commandFunction: |-
+    (config) => ({ command: 'uvx', args: ['--from', 'brevio-core[mcp]==0.11.1', 'brevio-core', 'mcp'] })
