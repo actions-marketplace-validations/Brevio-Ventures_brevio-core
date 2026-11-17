@@ -1,7 +1,7 @@
 # Security review of brevio-core
 
 This page is for a security team deciding whether brevio-core may run on its code and in its CI. Each statement says
-where it is tested or how to check it yourself. It describes release 0.11.1. To report a vulnerability, see
+where it is tested or how to check it yourself. It describes release 0.11.2. To report a vulnerability, see
 [SECURITY.md](SECURITY.md).
 
 ## In short
@@ -212,8 +212,8 @@ go on, so a broken hook never blocks an agent.
   stored token. PyPI keeps an attestation for each file, shown on the project page. To check one yourself:
 
   ```sh
-  pip download --no-deps brevio-core==0.11.1
-  pipx run pypi-attestations verify pypi --repository https://github.com/Brevio-Ventures/brevio-core pypi:brevio_core-0.11.1-py3-none-any.whl
+  pip download --no-deps brevio-core==0.11.2
+  pipx run pypi-attestations verify pypi --repository https://github.com/Brevio-Ventures/brevio-core pypi:brevio_core-0.11.2-py3-none-any.whl
   ```
 
 - **The `.pyz`.** Each GitHub release carries `brevio-core.pyz` with a build-provenance attestation. Check it before
@@ -225,18 +225,18 @@ go on, so a broken hook never blocks an agent.
 
 ## Pinning the Action
 
-`@v0.11.1` installs exactly brevio-core 0.11.1 (`package-version` defaults to the release of the Action). For a
+`@v0.11.2` installs exactly brevio-core 0.11.2 (`package-version` defaults to the release of the Action). For a
 pin that cannot move, use the full commit SHA of the tag. Find it with:
 
 ```sh
-git ls-remote https://github.com/Brevio-Ventures/brevio-core 'refs/tags/v0.11.1^{}' 'refs/tags/v0.11.1'
+git ls-remote https://github.com/Brevio-Ventures/brevio-core 'refs/tags/v0.11.2^{}' 'refs/tags/v0.11.2'
 ```
 
 The line that ends in `^{}` is the commit of an annotated tag; a lightweight tag has only the other line. Then write
 that SHA in the workflow, with the version as a comment:
 
 ```yaml
-- uses: Brevio-Ventures/brevio-core@<the full commit SHA> # v0.11.1
+- uses: Brevio-Ventures/brevio-core@<the full commit SHA> # v0.11.2
 ```
 
 The Action pins the third-party actions it uses (`actions/setup-python`, `github/codeql-action/upload-sarif`) to full

@@ -22,7 +22,7 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           fetch-depth: 0
-      - uses: Brevio-Ventures/brevio-core@v0.11.1
+      - uses: Brevio-Ventures/brevio-core@v0.11.2
         with:
           sarif: true
 ```
@@ -49,21 +49,21 @@ How often the hits of a rule were real, measured on public code that people wrot
 
 ## Run it without installing
 
-Version 0.11.1, Python 3.10 or newer, no runtime dependencies. In a repository, scan the lines your change adds:
+Version 0.11.2, Python 3.10 or newer, no runtime dependencies. In a repository, scan the lines your change adds:
 
 ```sh
-uvx brevio-core@0.11.1 scan --diff
-uvx brevio-core@0.11.1 score
+uvx brevio-core@0.11.2 scan --diff
+uvx brevio-core@0.11.2 score
 ```
 
 ```sh
-pipx run --spec brevio-core==0.11.1 brevio-core scan --diff
+pipx run --spec brevio-core==0.11.2 brevio-core scan --diff
 ```
 
 Or install it, then run it the same way:
 
 ```sh
-pip install brevio-core==0.11.1
+pip install brevio-core==0.11.2
 ```
 
 <!-- readme-test -->
@@ -266,7 +266,7 @@ run changes nothing.
 }
 ```
 
-Without a global install, use `"command": "uvx"` and `"args": ["brevio-core@0.11.1", "mcp"]`. Start the client in the project
+Without a global install, use `"command": "uvx"` and `"args": ["brevio-core@0.11.2", "mcp"]`. Start the client in the project
 folder: the server reads that folder and nothing else. The tools are `scan` (paths, or a diff base), `explain` (a rule
 id, returns the rule page), `list_rules` and `learn` (compiles a fixed defect into a guard).
 
@@ -406,7 +406,7 @@ The workflow at the top runs the scan on the lines a pull request adds. It write
 marks each finding on the changed file. With `pull-requests: write` it keeps one comment on the pull request up to date
 while there are findings, and marks it resolved once they are gone; a pull request from a fork gets the summary only.
 With `sarif: true` and `security-events: write` it uploads the findings to code scanning. It needs no secret and no
-API key. The tag `v0.11.1` runs exactly brevio-core 0.11.1. To follow the latest release instead, write
+API key. The tag `v0.11.2` runs exactly brevio-core 0.11.2. To follow the latest release instead, write
 `uses: Brevio-Ventures/brevio-core@v0`; to pin a commit, see [SECURITY-REVIEW.md](SECURITY-REVIEW.md). It runs on
 `pull_request`, `merge_group` and `push`, and refuses any other event.
 
@@ -415,7 +415,7 @@ API key. The tag `v0.11.1` runs exactly brevio-core 0.11.1. To follow the latest
 ```yaml
 repos:
   - repo: https://github.com/Brevio-Ventures/brevio-core
-    rev: v0.11.1
+    rev: v0.11.2
     hooks:
       - id: brevio-core
 ```

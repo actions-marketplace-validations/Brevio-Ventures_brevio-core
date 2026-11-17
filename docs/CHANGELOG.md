@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.11.2
+
+### Changed
+
+#### Checks found in a second review
+
+- `learn --diff=--` is refused on Python 3.10 with the message for any value that starts with a hyphen. Before, it ended in a traceback.
+
 ## 0.11.1
 
 ### Changed
@@ -30,7 +38,6 @@
 - A heal run learns a guard from the edit only when a line that the edit removes draws a finding. Before, it could learn the safe line that an edit replaced.
 - The agent hook does not block the agent on a finding that `scan --diff` does not fail on, such as a preview rule. Test-custody findings still block.
 - `score --diff` with a base that the checkout does not have stops with exit code 2, as `scan --diff` does.
-- `learn --diff=--` is refused on Python 3.10 with the message for any value that starts with a hyphen. Before, it ended in a traceback.
 - Shield replies show file names, findings and error texts as code, so a name that holds backticks or a mention stays inert.
 - `config` lists a preview rule at level warn, the level its findings have.
 - The setup self-test no longer passes when a `brevio-core.toml` in the folder ignores the rule, and `init` writes the pinned command into `.windsurfrules`, `.clinerules` and the Copilot file too.

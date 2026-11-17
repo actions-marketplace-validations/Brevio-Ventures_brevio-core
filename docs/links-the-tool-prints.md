@@ -34,12 +34,13 @@ public repositories the precision run measures, and the documents' own links.
 - `https://github.com/Brevio-Ventures/brevio-core/blob/main/SECURITY-REVIEW.md#the-ai-commands-optional`: `README.md (sections the release writes)`
 - `https://github.com/Brevio-Ventures/brevio-core/blob/main/SECURITY-REVIEW.md#what-each-command-sends-over-the-network`: `docs/install-from-a-mirror.md`
 - `https://github.com/Brevio-Ventures/brevio-core/blob/main/SECURITY.md`: `docs/release-integrity.md`
-- `https://github.com/Brevio-Ventures/brevio-core/blob/v0.11.1/docs/rules/`: `docs/sarif.md`
+- `https://github.com/Brevio-Ventures/brevio-core/blob/v0.11.2/docs/rules/`: `docs/sarif.md`
 - `https://github.com/Brevio-Ventures/brevio-core/discussions`: `.github/ISSUE_TEMPLATE/config.yml`, `README.md`, `SUPPORT.md`
 - `https://github.com/Brevio-Ventures/brevio-core/issues`: `pyproject.toml`
 - `https://github.com/Brevio-Ventures/brevio-core/pull/11`: `CONTRIBUTORS.md`
 - `https://github.com/Brevio-Ventures/brevio-core/pull/14`: `CONTRIBUTORS.md`
 - `https://github.com/Brevio-Ventures/brevio-core/pull/15`: `CONTRIBUTORS.md`
+- `https://github.com/Brevio-Ventures/brevio-core/pull/16`: `CONTRIBUTORS.md`
 - `https://github.com/Brevio-Ventures/brevio-core/releases`: `README.md`
 - `https://github.com/Brevio-Ventures/brevio-core/security/advisories/new`: `.github/ISSUE_TEMPLATE/config.yml`
 - `https://github.com/Brevio-Ventures/brevio-core/tree/main/skills/brevio-core`: `docs/LISTINGS.md`

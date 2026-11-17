@@ -2,7 +2,7 @@
 
 | In Plain English (For Anyone) | Technical Contract (For Engineers) |
 | --- | --- |
-| **What it does:** Checks the lines a pull request adds against the scanned rules and posts one summary comment. With a required check, a finding keeps the pull request from merging.<br>**When to use it:** In `.github/workflows/brevio-core.yml` on `pull_request`, `merge_group`, and `push`. | **Action:** `Brevio-Ventures/brevio-core@v0.11.1`<br>**Command Run:** `brevio-core scan --diff <base> --format markdown`<br>**Exit Codes:** The exit code is 0 when nothing is found, 1 when not. |
+| **What it does:** Checks the lines a pull request adds against the scanned rules and posts one summary comment. With a required check, a finding keeps the pull request from merging.<br>**When to use it:** In `.github/workflows/brevio-core.yml` on `pull_request`, `merge_group`, and `push`. | **Action:** `Brevio-Ventures/brevio-core@v0.11.2`<br>**Command Run:** `brevio-core scan --diff <base> --format markdown`<br>**Exit Codes:** The exit code is 0 when nothing is found, 1 when not. |
 
 The Action installs `brevio-core` and runs `brevio-core scan --diff <base>` on the lines a change adds. It needs no
 secret and makes no model call. It does not run `brevio-core check`, so the test-custody rules R20.1 to R20.5 are not
@@ -29,7 +29,7 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           fetch-depth: 0
-      - uses: Brevio-Ventures/brevio-core@v0.11.1
+      - uses: Brevio-Ventures/brevio-core@v0.11.2
 ```
 
 `fetch-depth: 0` matters: the scan compares the change with its base commit, which must be in the checkout.
@@ -60,14 +60,14 @@ A tag can move; a commit SHA cannot. To pin the Action the way it pins its own d
 the release tag and name it, with the tag as a comment:
 
 ```sh
-git ls-remote https://github.com/Brevio-Ventures/brevio-core refs/tags/v0.11.1
+git ls-remote https://github.com/Brevio-Ventures/brevio-core refs/tags/v0.11.2
 ```
 
 ```yaml
-      - uses: Brevio-Ventures/brevio-core@<the commit SHA printed above> # v0.11.1
+      - uses: Brevio-Ventures/brevio-core@<the commit SHA printed above> # v0.11.2
 ```
 
-The Action installs exactly brevio-core 0.11.1 from PyPI, because `package-version` defaults to the release of the
+The Action installs exactly brevio-core 0.11.2 from PyPI, because `package-version` defaults to the release of the
 Action. Dependabot's `github-actions` updates move a pinned SHA and its comment together.
 
 `v0` is a moving major tag until 1.0. It is the easiest to write and the least predictable; use an exact tag or a SHA
@@ -163,7 +163,7 @@ Give the step an `id` to read them in a later step as `steps.<id>.outputs.status
 ### A trial week: report, never fail
 
 ```yaml
-      - uses: Brevio-Ventures/brevio-core@v0.11.1
+      - uses: Brevio-Ventures/brevio-core@v0.11.2
         with:
           fail-on: none
 ```
@@ -186,7 +186,7 @@ until a reviewer allows it. To allow a reviewed change, set `allow-new-suppressi
 afterwards; pair it with CODEOWNERS on `.brevio/` so that a person with the right to approve reviews it:
 
 ```yaml
-      - uses: Brevio-Ventures/brevio-core@v0.11.1
+      - uses: Brevio-Ventures/brevio-core@v0.11.2
         with:
           allow-new-suppressions: true
 ```
@@ -196,7 +196,7 @@ afterwards; pair it with CODEOWNERS on `.brevio/` so that a person with the righ
 `paths` limits the scan to named folders. Run one step, or one job, per package:
 
 ```yaml
-      - uses: Brevio-Ventures/brevio-core@v0.11.1
+      - uses: Brevio-Ventures/brevio-core@v0.11.2
         with:
           paths: services/api
 ```
@@ -220,7 +220,7 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           fetch-depth: 0
-      - uses: Brevio-Ventures/brevio-core@v0.11.1
+      - uses: Brevio-Ventures/brevio-core@v0.11.2
         with:
           sarif: true
           comment: never
@@ -231,7 +231,7 @@ jobs:
 With a `brevio-core.toml` that sets some rules to `warn` (see the README's team rollout):
 
 ```yaml
-      - uses: Brevio-Ventures/brevio-core@v0.11.1
+      - uses: Brevio-Ventures/brevio-core@v0.11.2
         with:
           fail-on: error
 ```
@@ -243,7 +243,7 @@ that an earlier commit of the branch added. `brevio-core check --base <ref>` doe
 base. The `custody` input runs it after the scan and lists its test-custody findings, the R20 rules, in the comment:
 
 ```yaml
-      - uses: Brevio-Ventures/brevio-core@v0.11.1
+      - uses: Brevio-Ventures/brevio-core@v0.11.2
         with:
           custody: report
 ```
@@ -258,6 +258,6 @@ are a preview and have not been measured on public code, so start with `report`.
 The Action is a thin wrapper. Any CI can run the same check:
 
 ```sh
-pip install brevio-core==0.11.1
+pip install brevio-core==0.11.2
 brevio-core scan --diff origin/main --sarif brevio-core.sarif
 ```

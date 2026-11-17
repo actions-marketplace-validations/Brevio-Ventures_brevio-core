@@ -199,13 +199,14 @@ def _audit_rule_bullets(paths: list[str]) -> list[str]:
     return out
 
 
-def _added_lines(workspace_dir: str, rel_path: str, full_path: str, strict: bool = False) -> list[tuple[int, str]]:
+def _added_lines(workspace_dir: str, rel_path: str, full_path: str) -> list[tuple[int, str]]:
     """Return ``(line_no, line_text)`` for added lines in ``rel_path``, falling back to full file if untracked.
 
-    ``strict`` measures against main as ``rule_host.added_lines`` does: a change that only deletes lines blames none and a
-    change already committed on the work branch is still seen. It needs a main ref; without one the older reading holds.
+    It measures against main as ``rule_host.added_lines`` does: a change that only deletes lines blames none and a
+    change already committed on the work branch is still seen (second review, 2026-11-15, pipeline-2-F7; no switch
+    since review 5, 2026-11-17). It needs a main ref; without one the older reading holds.
     """
-    if strict and rule_host.base_ref(workspace_dir) != "HEAD":
+    if rule_host.base_ref(workspace_dir) != "HEAD":
         return rule_host.added_lines_numbered(workspace_dir, [rel_path])[rel_path]
     found = rule_host.head_added_lines(workspace_dir, rel_path)
     if found:
@@ -458,10 +459,8 @@ def _scan_single_file(rel_path: str, full_text: str, added: list[tuple[int, str]
     return findings
 
 
-def scan_added_lines(workspace_dir: str, changed_files: list[str], strict: bool = False) -> list[str]:
-    """Scan added lines across ``changed_files`` in ``workspace_dir`` for deterministic rule violations.
-
-    ``strict`` reads the added lines as ``_added_lines`` does under that flag (``HARNESS_ADDED_LINES_STRICT``)."""
+def scan_added_lines(workspace_dir: str, changed_files: list[str]) -> list[str]:
+    """Scan added lines across ``changed_files`` in ``workspace_dir`` for deterministic rule violations."""
     if not workspace_dir or not changed_files:
         return []
     violations: list[str] = []
@@ -476,7 +475,7 @@ def scan_added_lines(workspace_dir: str, changed_files: list[str], strict: bool 
                 full_text = f.read()
         except OSError:
             continue
-        added = _added_lines(workspace_dir, rel, full, strict)
+        added = _added_lines(workspace_dir, rel, full)
         violations.extend(_scan_single_file(rel, full_text, added))
         if _TENANT_API_RX.match(rel) and not (_TEST_PATH_RX.search(rel) or _TEST_SUPPORT_RX.search(rel)):
             violations.extend(_dropped_tenant_filters(workspace_dir, rel, full_text))

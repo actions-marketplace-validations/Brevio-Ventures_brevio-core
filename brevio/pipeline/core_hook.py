@@ -285,8 +285,8 @@ def answer(raw: str, kind: str, installed: str) -> str:
         return ""       # Cursor runs Claude Code's hooks as well; its own brevio-core hook answers
     if ev.kind == agent_hooks.POST_COMMAND:
         tip = ""
-        if re.search(r"\b(?:pytest|vitest|jest|cargo\s+test|go\s+test)\b", ev.command) and not re.search(r"\b-q\b|\brtk\b", ev.command):
-            tip = " (Tip: add -q or rtk to quiet verbose test runs.)"
+        if re.search(r"\b(?:pytest|vitest|jest|cargo\s+test|go\s+test)\b", ev.command) and not re.search(r"\b-q\b", ev.command):
+            tip = " (Tip: add -q to quiet verbose test runs.)"
         return reply(ev, LEARN_HINT + tip)
     os.chdir(root)      # the scan and the baseline read paths from the repository root
     lines = changed_lines(ev)

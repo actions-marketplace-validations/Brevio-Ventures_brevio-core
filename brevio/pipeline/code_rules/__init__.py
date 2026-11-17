@@ -202,7 +202,7 @@ STATUS_REASONS: dict[str, str] = {
                     "this rule, so no scan fails on it. `brevio-core check` reports it and exits 1 when it does."),
 }
 # A line for the Rules section of the next release notes about a rule, for a change the ID file cannot show: findings
-# that moved to another ID before the first release. Emptied when the release that carries them is out: 0.11.0 is out
+# that moved to another ID before the first release. Emptied when the release that carries them is out: 0.11.1 is out
 # (2026-11-16), so the table is empty until a change of the next release needs a line.
 RULE_NOTES: dict[str, str] = {}
 
@@ -264,7 +264,7 @@ _TEST_ASSET_RX = re.compile(r"(?:^|/)(?:tests?|spec)/assets/", re.I)
 _NO_ALT_IMG_RX = re.compile(r"<img\b(?!.*?alt=)[^>]*>", re.I)
 _CLICK_ON_DIV_RX = re.compile(r"<div\b[^>]*onClick\s*=(?!.*?role=)[^>]*>", re.I)
 _TARGET_BLANK_A_RX = re.compile(r"""<a\b[^>]*\btarget\s*=\s*["']_blank["'][^>]*>""", re.I)
-# The same tag read with the arrow ``=>`` of a handler inside it, which ``[^>]*`` took for the end of the tag (HARNESS_CODE_RULES_WIDER).
+# The same tag read with the arrow ``=>`` of a handler inside it, which ``[^>]*`` took for the end of the tag (the open core only).
 _TARGET_BLANK_A_WIDE_RX = re.compile(r"""<a\b(?:=>|[^>])*?\btarget\s*=\s*["']_blank["'](?:=>|[^>])*>""", re.I)
 _REL_NOOPENER_RX = re.compile(r"""\brel\s*=\s*["'][^"']*\bnoopener\b""", re.I)
 _UNBOUNDED_QUERY_RX = re.compile(r"\.(?:findMany|select)\s*\(\s*\{(?![^}]*take\s*:)(?![^}]*limit\s*:)", re.I)
@@ -684,8 +684,8 @@ def scan_lines(rel_path: str, numbered: list[tuple[int, str]], wider: bool = Tru
     """Scan ``(line_no, text)`` pairs of one file, keeping the real line numbers (a diff's added lines).
 
     ``wider`` (2026-11-15, second review) also reads ``shell=True`` behind a nested call, a subprocess call over several
-    lines and a link tag with a handler arrow or over several lines. The harness passes it by its own setting
-    (``HARNESS_CODE_RULES_WIDER``); the open core reads them all.
+    lines and a link tag with a handler arrow or over several lines. The harness's own scans pass ``wider=False``;
+    the open core reads them all.
 
     A TypeScript declaration file (``.d.ts``, ``.d.mts``, ``.d.cts``) gives no finding, so every scan mode skips it."""
     raw_findings: list[str] = []
